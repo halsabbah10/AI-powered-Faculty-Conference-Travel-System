@@ -26,8 +26,11 @@ from app.database.queries import (
     get_department_spending,
     get_requests_by_status,
     get_requests_by_month,
-    get_user_requests
+    get_user_requests,
+    get_budget_by_year,
+    get_expense_data_for_year
 )
+from app.services.report_service import generate_budget_report
 
 def show_accountant_dashboard():
     """Accountant main dashboard"""
@@ -180,6 +183,40 @@ def show_budget_management():
         st.dataframe(display_df, use_container_width=True)
     else:
         display_info_box("No budget history found.")
+    
+    # Budget report download
+    st.subheader("Download Budget Report")
+    download_budget_report()
+
+def download_budget_report():
+    """Generate and download a budget report PDF"""
+    # Get current year
+    current_year = datetime.now().year
+    
+    # Get budget data
+    budget_data = get_budget_by_year(current_year)
+    
+    if not budget_data:
+        display_error_box("Budget information not found for the current year.")
+        return
+    
+    # Get expense data
+    expenses_data = get_expense_data_for_year(current_year)
+    
+    # Generate PDF
+    try:
+        pdf_buffer = generate_budget_report(budget_data, expenses_data, current_year)
+        
+        # Provide download link
+        st.download_button(
+            label="Download Budget Report",
+            data=pdf_buffer,
+            file_name=f"budget_report_{current_year}.pdf",
+            mime="application/pdf"
+        )
+        
+    except Exception as e:
+        display_error_box(f"Error generating budget report: {str(e)}")
 
 def show_expense_reports():
     """Display expense reports interface"""
