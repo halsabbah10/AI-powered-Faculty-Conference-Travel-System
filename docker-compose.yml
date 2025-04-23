@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  ftcs-app:
+    build: .
+    container_name: ftcs-app
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      - DB_HOST=ftcs-db
+      - DB_USER=ftcs_user
+      - DB_PASSWORD=ftcs_password
+      - DB_NAME=con_system
+      - EMAIL_ENABLED=False
+    depends_on:
+      - ftcs-db
+    networks:
+      - ftcs-network
+    volumes:
+      - ./app:/app/app
+
+  ftcs-db:
+    image: mysql:8.0
+    container_name: ftcs-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=con_system
+      - MYSQL_USER=ftcs_user
+      - MYSQL_PASSWORD=ftcs_password
+    ports:
+      - "3306:3306"
+    networks:
+      - ftcs-network
+    volumes:
+      - ftcs-data:/var/lib/mysql
+      - ./con_system.sql:/docker-entrypoint-initdb.d/con_system.sql
+
+networks:
+  ftcs-network:
+    driver: bridge
+
+volumes:
+  ftcs-data:
