@@ -22,7 +22,9 @@ from app.database.queries import (
     create_request,
     get_budget_info,
     calculate_remaining_budget,
-    save_document
+    save_document,
+    get_request_by_id,
+    get_user_by_id
 )
 from app.services.document_service import (
     extract_text_from_file,
@@ -36,6 +38,7 @@ from app.services.ai_service import (
     generate_ai_notes,
     generate_conference_summary
 )
+from app.services.report_service import generate_request_pdf
 from app.utils.security import sanitize_input
 
 def show_professor_dashboard():
@@ -405,6 +408,39 @@ def show_my_requests():
             height=400
         )
         st.plotly_chart(fig, use_container_width=True)
+    
+    # Add download PDF functionality
+    st.subheader("Download Request Report")
+    request_id = st.text_input("Enter Request ID", help="Provide the ID of the request to download its report")
+    if request_id and st.button("Download PDF Report"):
+        download_request_pdf(request_id)
+
+def download_request_pdf(request_id):
+    """Generate and download a PDF report for a request"""
+    # Get request data
+    request_data = get_request_by_id(request_id)
+    
+    if not request_data:
+        display_error_box("Request not found.")
+        return
+    
+    # Get faculty data
+    faculty_data = get_user_by_id(request_data['faculty_user_id'])
+    
+    # Generate PDF
+    try:
+        pdf_buffer = generate_request_pdf(request_data, faculty_data)
+        
+        # Provide download link
+        st.download_button(
+            label="Download PDF Report",
+            data=pdf_buffer,
+            file_name=f"request_{request_id}.pdf",
+            mime="application/pdf"
+        )
+        
+    except Exception as e:
+        display_error_box(f"Error generating PDF: {str(e)}")
 
 def show_conference_recommendations():
     """Display conference recommendation tools"""
