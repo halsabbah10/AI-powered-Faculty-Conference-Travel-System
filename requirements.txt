@@ -11,3 +11,5 @@ python-docx
 google-generativeai
 pylatex
 httpx
+python-dateutil
+bcrypt
