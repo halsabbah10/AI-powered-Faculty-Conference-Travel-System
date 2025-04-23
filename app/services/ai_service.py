@@ -11,6 +11,7 @@ from openai import OpenAI
 from google import genai
 from google.genai import types
 import streamlit as st
+from app.utils.caching import cache_expensive_operation
 
 # Initialize AI clients
 def initialize_ai_services():
@@ -246,8 +247,9 @@ def generate_conference_summary(acceptance_text, conference_name):
         logging.error(f"Error generating conference summary: {str(e)}")
         return f"Unable to generate summary: {str(e)}"
 
+@cache_expensive_operation(key="ai_notes", ttl_seconds=3600)
 def generate_ai_notes(conference_name, purpose, index_type, destination_country, city):
-    """Generate helpful notes about conference and destination"""
+    """Generate AI notes with caching."""
     try:
         if not openai_client:
             return "Unable to generate notes. AI service not available."
@@ -282,8 +284,9 @@ def generate_ai_notes(conference_name, purpose, index_type, destination_country,
         logging.error(f"Error generating AI notes: {str(e)}")
         return f"Unable to generate notes: {str(e)}"
 
+@cache_expensive_operation(key="ai_analysis", ttl_seconds=7200)
 def analyze_research_paper(paper_text):
-    """Analyze research paper for strengths, weaknesses and recommendations"""
+    """Analyze research paper with caching."""
     try:
         if not openai_client:
             return {

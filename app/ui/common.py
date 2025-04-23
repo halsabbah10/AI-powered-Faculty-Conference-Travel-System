@@ -169,3 +169,50 @@ def show_loading_spinner(message="Loading..."):
     with st.spinner(message):
         # This is a placeholder for code that would take time to run
         pass
+
+def paginate_dataframe(df, page_size=10):
+    """
+    Create a pagination system for a DataFrame.
+    
+    Args:
+        df: Pandas DataFrame to paginate
+        page_size: Number of rows per page
+        
+    Returns:
+        DataFrame slice for the current page
+    """
+    # Initialize pagination state if needed
+    if "pagination_page" not in st.session_state:
+        st.session_state.pagination_page = 0
+    
+    # Calculate number of pages
+    n_pages = max(1, len(df) // page_size + (1 if len(df) % page_size > 0 else 0))
+    
+    # Ensure current page is valid
+    st.session_state.pagination_page = min(
+        st.session_state.pagination_page, 
+        n_pages - 1
+    )
+    
+    # Create pagination controls
+    col1, col2, col3 = st.columns([1, 3, 1])
+    
+    with col1:
+        if st.button("< Previous"):
+            st.session_state.pagination_page = max(0, st.session_state.pagination_page - 1)
+            st.experimental_rerun()
+    
+    with col2:
+        st.write(f"Page {st.session_state.pagination_page + 1} of {n_pages}")
+    
+    with col3:
+        if st.button("Next >"):
+            st.session_state.pagination_page = min(n_pages - 1, st.session_state.pagination_page + 1)
+            st.experimental_rerun()
+    
+    # Get start and end indices for current page
+    start_idx = st.session_state.pagination_page * page_size
+    end_idx = min(start_idx + page_size, len(df))
+    
+    # Return the dataframe slice for current page
+    return df.iloc[start_idx:end_idx]
