@@ -8,6 +8,11 @@ import json
 from datetime import datetime
 from app.database.connection import DatabaseManager
 import streamlit as st
+from app.services.email_service import (
+    send_request_submission_notification,
+    send_request_status_notification,
+    send_pending_approval_notification
+)
 
 #############################################
 # User & Authentication Related Queries
@@ -89,8 +94,8 @@ def get_request_by_id(request_id):
         logging.error(f"Error in get_request_by_id: {str(e)}")
         return None
 
-def create_request(faculty_user_id, request_data):
-    """Create a new conference travel request"""
+def create_request(request_data):
+    """Create a new travel request"""
     try:
         query = """
         INSERT INTO requests (
@@ -109,7 +114,7 @@ def create_request(faculty_user_id, request_data):
         
         params = (
             request_id,
-            faculty_user_id,
+            request_data.get('faculty_user_id'),
             request_data.get('conference_name'),
             request_data.get('purpose_of_attending'),
             request_data.get('conference_url'),
@@ -128,34 +133,67 @@ def create_request(faculty_user_id, request_data):
         )
         
         DatabaseManager.execute_query(query, params, fetch=False, commit=True)
+        
+        # After successfully creating the request, send notifications
+        # 1. Notify faculty member
+        faculty = get_user_by_id(request_data['faculty_user_id'])
+        if faculty and faculty['email']:
+            send_request_submission_notification(
+                request_id,
+                faculty['email'],
+                faculty['name'],
+                request_data['conference_name']
+            )
+        
+        # 2. Notify approvers
+        approvers = get_users_by_role('approval')
+        for approver in approvers:
+            if approver['email']:
+                send_pending_approval_notification(
+                    approver['email'],
+                    approver['name'],
+                    request_id,
+                    faculty['name'] if faculty else request_data['faculty_user_id'],
+                    request_data['conference_name']
+                )
+        
         return request_id
+        
     except Exception as e:
-        logging.error(f"Error in create_request: {str(e)}")
-        return None
+        logging.error(f"Error creating request: {str(e)}")
+        raise
 
-def update_request_status(request_id, status, reviewer_id=None, comments=None):
-    """Update request status and add reviewer comments if provided"""
+def update_request_status(request_id, status, notes=None):
+    """Update the status of a request"""
     try:
-        if reviewer_id and comments:
-            query = """
-            UPDATE requests 
-            SET status = %s, reviewer_id = %s, review_comments = %s, reviewed_at = NOW()
-            WHERE request_id = %s
-            """
-            params = (status, reviewer_id, comments, request_id)
-        else:
-            query = """
-            UPDATE requests 
-            SET status = %s
-            WHERE request_id = %s
-            """
-            params = (status, request_id)
-            
+        query = """
+        UPDATE requests 
+        SET status = %s
+        WHERE request_id = %s
+        """
+        params = (status, request_id)
+        
         DatabaseManager.execute_query(query, params, fetch=False, commit=True)
+        
+        # After successfully updating, send notification to faculty
+        request = get_request_by_id(request_id)
+        if request:
+            faculty = get_user_by_id(request['faculty_user_id'])
+            if faculty and faculty['email']:
+                send_request_status_notification(
+                    request_id,
+                    faculty['email'],
+                    faculty['name'],
+                    request['conference_name'],
+                    status,
+                    notes
+                )
+        
         return True
+        
     except Exception as e:
-        logging.error(f"Error in update_request_status: {str(e)}")
-        return False
+        logging.error(f"Error updating request status: {str(e)}")
+        raise
 
 def get_pending_requests(limit=50):
     """Get all pending requests for approval"""
