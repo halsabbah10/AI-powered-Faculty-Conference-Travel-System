@@ -1,0 +1,13 @@
+streamlit
+mysql-connector-python
+pandas
+python-dotenv
+PyPDF2
+requests
+openai
+beautifulsoup4
+plotly
+python-docx
+google-generativeai
+pylatex
+httpx
