@@ -7,6 +7,9 @@ import streamlit as st
 import os
 import logging
 from datetime import datetime
+from urllib.parse import parse_qs
+import re
+import pandas as pd
 
 def load_css():
     """Load custom CSS for styling the application"""
@@ -216,3 +219,152 @@ def paginate_dataframe(df, page_size=10):
     
     # Return the dataframe slice for current page
     return df.iloc[start_idx:end_idx]
+
+def is_mobile():
+    """
+    Detect if the user is on a mobile device.
+    
+    Returns:
+        bool: True if on mobile, False otherwise
+    """
+    # Try to get user agent from query params
+    try:
+        query_params = st.experimental_get_query_params()
+        user_agent = query_params.get("user_agent", [""])[0]
+        
+        # If not available in query params, use a default assumption
+        if not user_agent:
+            # Default to desktop
+            return False
+        
+        # Check for mobile patterns
+        mobile_pattern = r"Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini"
+        return bool(re.search(mobile_pattern, user_agent))
+    except:
+        # Default to desktop on error
+        return False
+
+def responsive_columns(ratios=None, mobile_stack=True):
+    """
+    Create responsive columns that adapt to mobile view.
+    
+    Args:
+        ratios: List of column width ratios (e.g., [1, 2, 1])
+        mobile_stack: Whether to stack columns on mobile
+        
+    Returns:
+        list: List of column objects
+    """
+    # Default to equal ratios if not specified
+    if not ratios:
+        ratios = [1, 1]
+    
+    # Check for mobile
+    on_mobile = is_mobile()
+    
+    if on_mobile and mobile_stack:
+        # Return each column at full width for mobile
+        return [st.container() for _ in ratios]
+    else:
+        # Use specified ratios for desktop
+        return st.columns(ratios)
+
+def responsive_layout(content_func, sidebar_func=None, mobile_sidebar_top=True):
+    """
+    Create a responsive layout with optional sidebar.
+    
+    Args:
+        content_func: Function to render main content
+        sidebar_func: Function to render sidebar content
+        mobile_sidebar_top: Whether to show sidebar at top on mobile
+        
+    Returns:
+        None
+    """
+    # Check for mobile
+    on_mobile = is_mobile()
+    
+    if on_mobile:
+        if sidebar_func and mobile_sidebar_top:
+            with st.container():
+                sidebar_func()
+            content_func()
+        elif sidebar_func:
+            content_func()
+            with st.container():
+                sidebar_func()
+        else:
+            content_func()
+    else:
+        # Desktop layout with sidebar
+        if sidebar_func:
+            with st.sidebar:
+                sidebar_func()
+        content_func()
+
+def responsive_table(data, height=None, use_container_width=True):
+    """
+    Display a table responsively based on device.
+    
+    Args:
+        data: Pandas DataFrame to display
+        height: Optional height for desktop
+        use_container_width: Whether to use full container width
+        
+    Returns:
+        None
+    """
+    # Check for mobile
+    on_mobile = is_mobile()
+    
+    if on_mobile:
+        # Simpler table for mobile
+        st.dataframe(
+            data,
+            use_container_width=True,
+            height=300 if height is None else height
+        )
+    else:
+        # Full-featured table for desktop
+        st.dataframe(
+            data,
+            use_container_width=use_container_width,
+            height=None if height is None else height
+        )
+
+def add_responsive_css():
+    """Add responsive CSS to adjust UI for different screen sizes."""
+    st.markdown("""
+    <style>
+    /* Responsive CSS */
+    @media (max-width: 768px) {
+        /* Adjust header size on mobile */
+        .main h1 {
+            font-size: 1.8rem !important;
+        }
+        .main h2 {
+            font-size: 1.5rem !important;
+        }
+        .main h3 {
+            font-size: 1.2rem !important;
+        }
+        
+        /* Adjust container padding */
+        .main .block-container {
+            padding: 1rem !important;
+        }
+        
+        /* Make buttons more tappable */
+        button {
+            min-height: 44px !important;
+        }
+        
+        /* Stack widgets */
+        div[data-testid="stHorizontalBlock"] > div {
+            width: 100% !important;
+            flex: 0 0 100% !important;
+            margin-bottom: 1rem !important;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)

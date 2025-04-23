@@ -1,15 +1,41 @@
-streamlit
-mysql-connector-python
-pandas
-python-dotenv
-PyPDF2
-requests
-openai
-beautifulsoup4
-plotly
-python-docx
-google-generativeai
-pylatex
-httpx
-python-dateutil
-bcrypt
+# Core dependencies
+streamlit==1.22.0
+mysql-connector-python==8.0.32
+pandas==1.5.3
+numpy==1.24.3
+plotly==5.13.1
+python-dotenv==1.0.0
+
+# AI and NLP
+openai==0.27.0
+google-generativeai==0.3.0
+langchain==0.0.27
+scikit-learn==1.2.2
+
+# Document processing
+PyPDF2==3.0.1
+python-docx==0.8.11
+markdown==3.4.3
+
+# Security
+bcrypt==4.0.1
+pyotp==2.8.0
+
+# Email
+secure-smtplib==0.1.1
+
+# Data visualization
+matplotlib==3.7.1
+
+# PDF generation
+reportlab==3.6.13
+
+# Time series forecasting
+statsmodels==0.14.0
+
+# HTTP client for APIs
+requests==2.28.2
+
+# Testing
+pytest==7.3.1
+pytest-mock==3.10.0
