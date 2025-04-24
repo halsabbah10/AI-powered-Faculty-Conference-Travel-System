@@ -1,447 +1,332 @@
 """
 Validation utility module.
-Provides reusable validation functions for form data.
+Provides standardized validation for forms and data.
 """
 
 import re
-from datetime import datetime, date
-from urllib.parse import urlparse
 import streamlit as st
-from app.utils.error_handling import ValidationError
+from datetime import datetime
+from app.utils.internationalization import t
+from app.utils.error_handling import ValidationError, raise_validation_error
 
 class Validator:
-    """Utility class for validating data."""
+    """Validation utility class for form input and data validation."""
     
     @staticmethod
-    def required(value, field_name=None, message=None):
+    def required(value, message=None):
         """
         Validate that a value is not empty.
         
         Args:
             value: Value to validate
-            field_name: Optional field name for error message
             message: Optional custom error message
             
         Returns:
             bool or str: True if valid, error message if invalid
         """
-        if value is None or (isinstance(value, str) and not value.strip()):
-            return message or f"{field_name or 'This field'} is required"
+        # Handle different types of emptiness
+        if value is None:
+            return message or t("validation.required", "This field is required")
+        
+        if isinstance(value, str) and value.strip() == "":
+            return message or t("validation.required", "This field is required")
+        
+        if isinstance(value, (list, dict)) and len(value) == 0:
+            return message or t("validation.required", "This field is required")
+            
         return True
     
     @staticmethod
-    def min_length(min_length):
+    def min_length(min_len, message=None):
         """
-        Create validator for minimum string length.
+        Create a validator for minimum string length.
         
         Args:
-            min_length: Minimum required length
+            min_len: Minimum length required
+            message: Optional custom error message
             
         Returns:
             function: Validator function
         """
-        def validator(value, field_name=None, message=None):
-            if not value or len(str(value)) < min_length:
-                return message or f"{field_name or 'This field'} must be at least {min_length} characters"
+        def validator(value):
+            if not value or not isinstance(value, str):
+                return True  # Skip validation if empty (use required validator for that)
+                
+            if len(value) < min_len:
+                return message or t("validation.min_length", "Must be at least {0} characters").format(min_len)
+                
             return True
+            
         return validator
     
     @staticmethod
-    def max_length(max_length):
+    def max_length(max_len, message=None):
         """
-        Create validator for maximum string length.
+        Create a validator for maximum string length.
         
         Args:
-            max_length: Maximum allowed length
+            max_len: Maximum length allowed
+            message: Optional custom error message
             
         Returns:
             function: Validator function
         """
-        def validator(value, field_name=None, message=None):
-            if value and len(str(value)) > max_length:
-                return message or f"{field_name or 'This field'} must be at most {max_length} characters"
-            return True
-        return validator
-    
-    @staticmethod
-    def email(value, field_name=None, message=None):
-        """
-        Validate email format.
-        
-        Args:
-            value: Value to validate
-            field_name: Optional field name for error message
-            message: Optional custom error message
-            
-        Returns:
-            bool or str: True if valid, error message if invalid
-        """
-        if not value:
-            return True  # Skip validation if empty (use required validator if necessary)
-        
-        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        if not re.match(email_pattern, value):
-            return message or f"{field_name or 'Email'} is not a valid email address"
-        return True
-    
-    @staticmethod
-    def url(value, field_name=None, message=None, require_https=False):
-        """
-        Validate URL format.
-        
-        Args:
-            value: Value to validate
-            field_name: Optional field name for error message
-            message: Optional custom error message
-            require_https: Whether to require HTTPS
-            
-        Returns:
-            bool or str: True if valid, error message if invalid
-        """
-        if not value:
-            return True  # Skip validation if empty
-        
-        try:
-            result = urlparse(value)
-            valid = all([result.scheme, result.netloc])
-            
-            if require_https and result.scheme != 'https':
-                return message or f"{field_name or 'URL'} must use HTTPS"
-                
-            if not valid:
-                return message or f"{field_name or 'URL'} is not a valid URL"
-                
-            return True
-        except:
-            return message or f"{field_name or 'URL'} is not a valid URL"
-    
-    @staticmethod
-    def date_range(start_date, end_date, field_name=None, message=None):
-        """
-        Validate date range (start must be before or equal to end).
-        
-        Args:
-            start_date: Start date
-            end_date: End date
-            field_name: Optional field name for error message
-            message: Optional custom error message
-            
-        Returns:
-            bool or str: True if valid, error message if invalid
-        """
-        if not start_date or not end_date:
-            return True  # Skip validation if either date is missing
-        
-        # Convert strings to date objects if needed
-        if isinstance(start_date, str):
-            try:
-                start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
-            except:
-                return f"Invalid start date format"
-        
-        if isinstance(end_date, str):
-            try:
-                end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
-            except:
-                return f"Invalid end date format"
-        
-        # Ensure both are date objects
-        if isinstance(start_date, datetime):
-            start_date = start_date.date()
-        if isinstance(end_date, datetime):
-            end_date = end_date.date()
-        
-        if start_date > end_date:
-            return message or f"{field_name or 'End date'} must be after start date"
-        return True
-    
-    @staticmethod
-    def numeric(value, field_name=None, message=None):
-        """
-        Validate that value is numeric.
-        
-        Args:
-            value: Value to validate
-            field_name: Optional field name for error message
-            message: Optional custom error message
-            
-        Returns:
-            bool or str: True if valid, error message if invalid
-        """
-        if not value:
-            return True  # Skip validation if empty
-        
-        try:
-            float(value)
-            return True
-        except:
-            return message or f"{field_name or 'This field'} must be a number"
-    
-    @staticmethod
-    def number_range(min_val=None, max_val=None):
-        """
-        Create validator for number range.
-        
-        Args:
-            min_val: Minimum allowed value (or None for no minimum)
-            max_val: Maximum allowed value (or None for no maximum)
-            
-        Returns:
-            function: Validator function
-        """
-        def validator(value, field_name=None, message=None):
-            if not value:
+        def validator(value):
+            if not value or not isinstance(value, str):
                 return True  # Skip validation if empty
+                
+            if len(value) > max_len:
+                return message or t("validation.max_length", "Must be at most {0} characters").format(max_len)
+                
+            return True
             
+        return validator
+    
+    @staticmethod
+    def pattern(regex, message=None):
+        """
+        Create a validator for regex pattern matching.
+        
+        Args:
+            regex: Regular expression pattern
+            message: Optional custom error message
+            
+        Returns:
+            function: Validator function
+        """
+        def validator(value):
+            if not value or not isinstance(value, str):
+                return True  # Skip validation if empty
+                
+            if not re.match(regex, value):
+                return message or t("validation.pattern", "Invalid format")
+                
+            return True
+            
+        return validator
+    
+    @staticmethod
+    def email(message=None):
+        """
+        Create a validator for email format.
+        
+        Args:
+            message: Optional custom error message
+            
+        Returns:
+            function: Validator function
+        """
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        return Validator.pattern(email_pattern, message or t("validation.email", "Invalid email address"))
+    
+    @staticmethod
+    def url(message=None):
+        """
+        Create a validator for URL format.
+        
+        Args:
+            message: Optional custom error message
+            
+        Returns:
+            function: Validator function
+        """
+        url_pattern = r'^(https?|ftp):\/\/[^\s/$.?#].[^\s]*$'
+        return Validator.pattern(url_pattern, message or t("validation.url", "Invalid URL format"))
+    
+    @staticmethod
+    def min_value(min_val, message=None):
+        """
+        Create a validator for minimum numeric value.
+        
+        Args:
+            min_val: Minimum value allowed
+            message: Optional custom error message
+            
+        Returns:
+            function: Validator function
+        """
+        def validator(value):
+            if value is None:
+                return True  # Skip validation if empty
+                
             try:
+                # Convert to float for comparison
                 num_value = float(value)
+                if num_value < min_val:
+                    return message or t("validation.min_value", "Must be at least {0}").format(min_val)
+            except (ValueError, TypeError):
+                return t("validation.number", "Must be a number")
                 
-                if min_val is not None and num_value < min_val:
-                    return message or f"{field_name or 'This field'} must be at least {min_val}"
-                
-                if max_val is not None and num_value > max_val:
-                    return message or f"{field_name or 'This field'} must be at most {max_val}"
-                
-                return True
-            except:
-                return f"{field_name or 'This field'} must be a number"
+            return True
+            
         return validator
     
     @staticmethod
-    def file_size(max_size_mb):
+    def max_value(max_val, message=None):
         """
-        Create validator for file size.
+        Create a validator for maximum numeric value.
         
         Args:
-            max_size_mb: Maximum file size in megabytes
+            max_val: Maximum value allowed
+            message: Optional custom error message
             
         Returns:
             function: Validator function
         """
-        def validator(file, field_name=None, message=None):
-            if not file:
-                return True  # Skip validation if no file
-            
-            max_bytes = max_size_mb * 1024 * 1024
-            
-            if hasattr(file, 'size'):
-                # Streamlit UploadedFile
-                if file.size > max_bytes:
-                    return message or f"{field_name or 'File'} size exceeds the maximum of {max_size_mb}MB"
-            elif isinstance(file, bytes):
-                # Raw bytes
-                if len(file) > max_bytes:
-                    return message or f"{field_name or 'File'} size exceeds the maximum of {max_size_mb}MB"
-            
+        def validator(value):
+            if value is None:
+                return True  # Skip validation if empty
+                
+            try:
+                # Convert to float for comparison
+                num_value = float(value)
+                if num_value > max_val:
+                    return message or t("validation.max_value", "Must be at most {0}").format(max_val)
+            except (ValueError, TypeError):
+                return t("validation.number", "Must be a number")
+                
             return True
+            
         return validator
     
     @staticmethod
-    def file_type(allowed_types):
+    def date_range(start_date=None, end_date=None, message=None):
         """
-        Create validator for file type.
+        Create a validator for date range.
         
         Args:
-            allowed_types: List of allowed MIME types or extensions
+            start_date: Minimum date allowed
+            end_date: Maximum date allowed
+            message: Optional custom error message
             
         Returns:
             function: Validator function
         """
-        def validator(file, field_name=None, message=None):
-            if not file:
-                return True  # Skip validation if no file
-            
-            if hasattr(file, 'type') and file.type:
-                # Check MIME type
-                file_type = file.type
+        def validator(value):
+            if value is None:
+                return True  # Skip validation if empty
                 
-                if not any(allowed in file_type.lower() for allowed in allowed_types):
-                    types_str = ", ".join(allowed_types)
-                    return message or f"{field_name or 'File'} type must be one of: {types_str}"
-            elif hasattr(file, 'name') and file.name:
-                # Check extension
-                file_ext = file.name.split('.')[-1].lower()
+            if not isinstance(value, datetime.date):
+                return t("validation.date", "Must be a valid date")
                 
-                if not any(ext.lower() == file_ext or ext.lower() == f".{file_ext}" for ext in allowed_types):
-                    types_str = ", ".join(allowed_types)
-                    return message or f"{field_name or 'File'} type must be one of: {types_str}"
-            
+            if start_date and value < start_date:
+                return message or t("validation.date_min", "Date must be on or after {0}").format(start_date.strftime("%Y-%m-%d"))
+                
+            if end_date and value > end_date:
+                return message or t("validation.date_max", "Date must be on or before {0}").format(end_date.strftime("%Y-%m-%d"))
+                
             return True
+            
         return validator
     
     @staticmethod
-    def validate_form(data, validators):
+    def validate_form(form_data, validators):
         """
-        Validate form data using validators.
+        Validate a form with multiple field validators.
         
         Args:
-            data: Dictionary of form data
-            validators: Dictionary of field validators {field_name: validator_function}
+            form_data: Dictionary of form field values
+            validators: Dictionary mapping field names to validators
             
         Returns:
             tuple: (is_valid, errors)
-            
-        Example:
-            validators = {
-                'name': [Validator.required, Validator.min_length(3)],
-                'email': [Validator.required, Validator.email],
-                'age': [Validator.numeric, Validator.number_range(18, 120)]
-            }
-            is_valid, errors = Validator.validate_form(form_data, validators)
         """
         errors = {}
         
-        for field_name, field_validators in validators.items():
-            if not isinstance(field_validators, list):
-                field_validators = [field_validators]
+        for field, field_validators in validators.items():
+            if field not in form_data:
+                continue
             
-            value = data.get(field_name)
+            value = form_data[field]
             
+            # Apply each validator for this field
             for validator in field_validators:
-                result = validator(value, field_name)
+                result = validator(value)
                 
                 if result is not True:
-                    errors[field_name] = result
+                    errors[field] = result
                     break
         
         return len(errors) == 0, errors
 
-    @staticmethod
-    def validate_or_raise(data, validators):
-        """
-        Validate form data and raise ValidationError if invalid.
-        
-        Args:
-            data: Dictionary of form data
-            validators: Dictionary of field validators
-            
-        Returns:
-            bool: True if valid
-            
-        Raises:
-            ValidationError: If validation fails
-        """
-        is_valid, errors = Validator.validate_form(data, validators)
-        
-        if not is_valid:
-            if len(errors) == 1:
-                field_name = list(errors.keys())[0]
-                raise ValidationError(errors[field_name], field=field_name)
-            else:
-                raise ValidationError("Form validation failed", details=errors)
-        
-        return True
-
-
-def validate_conference_input(data):
-    """
-    Validate conference input form data.
-    
-    Args:
-        data: Dictionary with conference form data
-        
-    Returns:
-        tuple: (is_valid, errors)
-    """
-    validators = {
-        'conference_name': [
-            Validator.required,
-            Validator.min_length(3)
-        ],
-        'conference_url': [
-            Validator.required,
-            Validator.url
-        ],
-        'destination': [
-            Validator.required
-        ],
-        'city': [
-            Validator.required
-        ]
-    }
-    
-    is_valid, errors = Validator.validate_form(data, validators)
-    
-    # Custom date range validation
-    if 'date_from' in data and 'date_to' in data:
-        date_result = Validator.date_range(
-            data.get('date_from'), 
-            data.get('date_to'),
-            "Date range"
-        )
-        
-        if date_result is not True:
-            is_valid = False
-            errors['date_to'] = date_result
-    
-    return is_valid, errors
-
-
-def validate_document_upload(data):
-    """
-    Validate document upload form data.
-    
-    Args:
-        data: Dictionary with document form data
-        
-    Returns:
-        tuple: (is_valid, errors)
-    """
-    validators = {
-        'file': [
-            Validator.required,
-            Validator.file_size(10),  # 10MB max
-            Validator.file_type(['pdf', 'docx', 'doc', 'txt', 'application/pdf', 
-                                'application/vnd.openxmlformats-officedocument.wordprocessingml.document'])
-        ],
-        'description': [
-            Validator.required,
-            Validator.min_length(5),
-            Validator.max_length(200)
-        ]
-    }
-    
-    return Validator.validate_form(data, validators)
-
-
-def validate_budget_input(data):
-    """
-    Validate budget form data.
-    
-    Args:
-        data: Dictionary with budget form data
-        
-    Returns:
-        tuple: (is_valid, errors)
-    """
-    validators = {
-        'department': [Validator.required],
-        'year': [
-            Validator.required,
-            Validator.numeric,
-            Validator.number_range(2000, 2100)
-        ],
-        'quarter': [
-            Validator.required,
-            Validator.numeric,
-            Validator.number_range(1, 4)
-        ],
-        'amount': [
-            Validator.required,
-            Validator.numeric,
-            Validator.number_range(0, None)
-        ]
-    }
-    
-    return Validator.validate_form(data, validators)
-
-
 def display_form_errors(errors):
     """
-    Display form validation errors in Streamlit.
+    Display form validation errors in the UI.
     
     Args:
-        errors: Dictionary of field/error pairs
+        errors: Dictionary of field/error pairs or error message
     """
-    for field, error in errors.items():
-        st.error(f"{field}: {error}")
+    if isinstance(errors, dict):
+        for field, error in errors.items():
+            st.error(f"{field}: {error}")
+    elif isinstance(errors, list):
+        for error in errors:
+            st.error(error)
+    else:
+        st.error(str(errors))
+
+# Common validation functions
+def validate_conference_input(conference_name, conference_url, start_date, end_date):
+    """
+    Validate conference input data.
+    
+    Args:
+        conference_name: Conference name
+        conference_url: Conference URL
+        start_date: Start date
+        end_date: End date
+        
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    if not conference_name or len(conference_name) < 3:
+        return False, t("validation.conference_name", "Conference name must be at least 3 characters")
+        
+    if conference_url and not (conference_url.startswith("http://") or conference_url.startswith("https://")):
+        return False, t("validation.conference_url", "Please enter a valid URL starting with http:// or https://")
+        
+    if start_date and end_date and start_date > end_date:
+        return False, t("validation.date_range", "End date must be after start date")
+        
+    return True, ""
+
+def validate_budget_input(budget_data):
+    """
+    Validate budget input data.
+    
+    Args:
+        budget_data: Budget form data
+        
+    Returns:
+        tuple: (is_valid, errors)
+    """
+    errors = {}
+    
+    # Required fields
+    required_fields = ['department', 'year', 'amount']
+    for field in required_fields:
+        if field not in budget_data or not budget_data[field]:
+            errors[field] = t("validation.required", "This field is required")
+    
+    # Validate year
+    if 'year' in budget_data and budget_data['year']:
+        try:
+            year = int(budget_data['year'])
+            current_year = datetime.now().year
+            if year < current_year - 1 or year > current_year + 5:
+                errors['year'] = t("validation.year_range", "Year must be between {0} and {1}").format(
+                    current_year - 1, current_year + 5
+                )
+        except (ValueError, TypeError):
+            errors['year'] = t("validation.year_format", "Year must be a valid number")
+    
+    # Validate amount
+    if 'amount' in budget_data and budget_data['amount']:
+        try:
+            amount = float(budget_data['amount'])
+            if amount <= 0:
+                errors['amount'] = t("validation.amount_positive", "Amount must be positive")
+        except (ValueError, TypeError):
+            errors['amount'] = t("validation.amount_format", "Amount must be a valid number")
+    
+    return len(errors) == 0, errors

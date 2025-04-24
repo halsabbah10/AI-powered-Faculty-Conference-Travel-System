@@ -13,6 +13,8 @@ import functools
 from app.utils.performance import timer
 from app.utils.feature_flags import FeatureFlags
 from app.utils.error_monitoring import capture_error
+from app.services.interfaces import AIServiceInterface
+from app.utils.error_handling import ServiceError, handle_exceptions
 
 # Configure API keys
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -49,375 +51,243 @@ def cache_expensive_operation(func):
     
     return wrapper
 
-@capture_error
-@timer(label="AI-Conference-Validation")
-@cache_expensive_operation
-def validate_conference(conference_name, conference_url, destination=None):
+class AIService(AIServiceInterface):
     """
-    Validate conference legitimacy using AI.
+    AI service implementation.
+    Provides AI-powered functionality for the application.
+    """
+    
+    @handle_exceptions(default_message="Error analyzing text")
+    def analyze_text(self, text, analysis_type, options=None):
+        """
+        Analyze text using AI.
+        
+        Args:
+            text: Text to analyze
+            analysis_type: Type of analysis (sentiment, entities, etc.)
+            options: Optional analysis options
+            
+        Returns:
+            dict: Analysis results
+        """
+        options = options or {}
+        
+        # Get AI provider based on configuration
+        provider = self._get_ai_provider()
+        
+        # Perform analysis based on type
+        if analysis_type == 'sentiment':
+            return provider.analyze_sentiment(text, options)
+        elif analysis_type == 'entities':
+            return provider.extract_entities(text, options)
+        elif analysis_type == 'summary':
+            return provider.generate_summary(text, options)
+        elif analysis_type == 'keywords':
+            return provider.extract_keywords(text, options)
+        else:
+            raise ServiceError(
+                f"Unsupported analysis type: {analysis_type}",
+                service="AIService",
+                operation="analyze_text"
+            )
+    
+    @handle_exceptions(default_message="Error generating text")
+    def generate_text(self, prompt, options=None):
+        """
+        Generate text using AI.
+        
+        Args:
+            prompt: Text prompt
+            options: Optional generation options
+            
+        Returns:
+            str: Generated text
+        """
+        options = options or {}
+        
+        # Get AI provider based on configuration
+        provider = self._get_ai_provider()
+        
+        # Generate text
+        return provider.generate_text(prompt, options)
+    
+    @handle_exceptions(default_message="Error validating content")
+    def validate_content(self, content, validation_type, options=None):
+        """
+        Validate content using AI.
+        
+        Args:
+            content: Content to validate
+            validation_type: Type of validation
+            options: Optional validation options
+            
+        Returns:
+            dict: Validation results
+        """
+        options = options or {}
+        
+        # Get AI provider based on configuration
+        provider = self._get_ai_provider()
+        
+        # Perform validation based on type
+        if validation_type == 'conference':
+            return provider.validate_conference(content, options)
+        elif validation_type == 'paper':
+            return provider.validate_research_paper(content, options)
+        else:
+            raise ServiceError(
+                f"Unsupported validation type: {validation_type}",
+                service="AIService",
+                operation="validate_content"
+            )
+    
+    @handle_exceptions(default_message="Error getting recommendations")
+    def get_recommendations(self, context, options=None):
+        """
+        Get recommendations based on context.
+        
+        Args:
+            context: Context data for recommendations
+            options: Optional recommendation options
+            
+        Returns:
+            list: Recommendations
+        """
+        options = options or {}
+        
+        # Get AI provider based on configuration
+        provider = self._get_ai_provider()
+        
+        # Get recommendations
+        return provider.get_recommendations(context, options)
+    
+    def _get_ai_provider(self):
+        """
+        Get AI provider based on configuration.
+        
+        Returns:
+            object: AI provider
+        """
+        from app.utils.feature_flags import FeatureFlags
+        from app.config import get_config
+        
+        # Get provider from configuration
+        provider_name = get_config("AI_PROVIDER", "openai")
+        
+        # Initialize the appropriate provider
+        if provider_name.lower() == "openai":
+            from app.services.ai_providers.openai_provider import OpenAIProvider
+            return OpenAIProvider()
+        elif provider_name.lower() == "google":
+            from app.services.ai_providers.google_provider import GoogleAIProvider
+            return GoogleAIProvider()
+        elif provider_name.lower() == "mock":
+            from app.services.ai_providers.mock_provider import MockAIProvider
+            return MockAIProvider()
+        else:
+            raise ServiceError(
+                f"Unsupported AI provider: {provider_name}",
+                service="AIService",
+                operation="_get_ai_provider"
+            )
+
+# Helper functions that use the AI service through service locator
+
+def validate_with_gpt(text, validation_type):
+    """
+    Validate text with AI.
     
     Args:
-        conference_name: Name of the conference
-        conference_url: URL of the conference website
-        destination: Optional destination/location
+        text: Text to validate
+        validation_type: Type of validation
         
     Returns:
         dict: Validation results
     """
-    # Check if AI analysis is enabled
-    if not FeatureFlags.is_enabled("ai_analysis"):
-        logging.info("AI analysis is disabled, skipping conference validation")
-        return {
-            "legitimate": True,
-            "confidence": 0.5,
-            "notes": "AI analysis is currently disabled. Manual verification recommended.",
-            "potential_issues": []
-        }
+    from app.services.service_provider import ServiceProvider
     
-    try:
-        # Prepare prompt
-        prompt = f"""
-        Analyze the following academic conference for legitimacy:
-        
-        Conference Name: {conference_name}
-        Conference Website: {conference_url}
-        Destination: {destination or 'Not provided'}
-        
-        Please determine if this appears to be a legitimate academic conference or potentially a predatory/fake conference.
-        Consider factors such as:
-        1. Is this a known and established conference?
-        2. Does the website look professional and provide clear information?
-        3. Is the conference location consistent with the conference topic?
-        4. Are there any red flags that suggest this might be a predatory conference?
-        
-        Provide your assessment with:
-        - Legitimacy determination (legitimate or potentially predatory)
-        - Confidence level (0.0 to 1.0)
-        - Specific notes and observations
-        - List of potential issues if any
-        """
-        
-        # Choose AI provider based on configuration
-        ai_provider = os.getenv("AI_PROVIDER", "openai").lower()
-        
-        if ai_provider == "google":
-            return _analyze_with_google_ai(prompt)
-        else:
-            return _analyze_with_openai(prompt)
-            
-    except Exception as e:
-        logging.error(f"Error validating conference: {str(e)}")
-        # Return safe fallback
-        return {
-            "legitimate": True,
-            "confidence": 0.0,
-            "notes": f"Error during AI analysis: {str(e)}. Manual verification required.",
-            "potential_issues": ["AI analysis failed"]
-        }
+    ai_service = ServiceProvider.service(AIService)
+    return ai_service.validate_content(text, validation_type)
 
-@capture_error
-@timer(label="AI-Paper-Analysis")
-@cache_expensive_operation
-def analyze_research_paper(paper_text, conference_name=None):
+def get_conference_recommendations(research_area, keywords=None):
     """
-    Analyze research paper content using AI.
+    Get conference recommendations based on research area.
     
     Args:
-        paper_text: Text content of the paper
-        conference_name: Optional name of the target conference
+        research_area: Research area
+        keywords: Optional additional keywords
+        
+    Returns:
+        list: Conference recommendations
+    """
+    from app.services.service_provider import ServiceProvider
+    
+    ai_service = ServiceProvider.service(AIService)
+    
+    context = {
+        "research_area": research_area,
+        "keywords": keywords or []
+    }
+    
+    return ai_service.get_recommendations(context, {"type": "conference"})
+
+def analyze_research_paper(paper_text):
+    """
+    Analyze research paper text.
+    
+    Args:
+        paper_text: Research paper text
         
     Returns:
         dict: Analysis results
     """
-    # Check if AI analysis is enabled
-    if not FeatureFlags.is_enabled("ai_analysis"):
-        logging.info("AI analysis is disabled, skipping paper analysis")
-        return {
-            "quality_score": 0.5,
-            "summary": "AI analysis is currently disabled. Manual review recommended.",
-            "strengths": ["Could not be automatically analyzed"],
-            "weaknesses": ["Could not be automatically analyzed"],
-            "suggestions": ["Enable AI analysis for detailed feedback"]
-        }
+    from app.services.service_provider import ServiceProvider
     
-    try:
-        # Limit text length to avoid token limits
-        max_length = 8000
-        if len(paper_text) > max_length:
-            paper_text = paper_text[:max_length] + "... [truncated]"
-        
-        # Prepare prompt
-        prompt = f"""
-        Analyze the following research paper{' for ' + conference_name if conference_name else ''}:
-        
-        {paper_text}
-        
-        Please provide an academic assessment of this paper with:
-        1. A quality score from 0.0 to 1.0
-        2. A brief summary of the paper (3-5 sentences)
-        3. Key strengths (3-5 points)
-        4. Potential weaknesses or areas for improvement (3-5 points)
-        5. Specific suggestions to improve the paper (3-5 points)
-        """
-        
-        # Choose AI provider based on configuration
-        ai_provider = os.getenv("AI_PROVIDER", "openai").lower()
-        
-        if ai_provider == "google":
-            return _process_paper_analysis(_analyze_with_google_ai(prompt))
-        else:
-            return _process_paper_analysis(_analyze_with_openai(prompt))
-            
-    except Exception as e:
-        logging.error(f"Error analyzing research paper: {str(e)}")
-        # Return safe fallback
-        return {
-            "quality_score": 0.5,
-            "summary": f"Error during analysis: {str(e)}. Manual review required.",
-            "strengths": ["Could not be automatically analyzed"],
-            "weaknesses": ["Could not be automatically analyzed"],
-            "suggestions": ["Try again later or request manual review"]
-        }
+    ai_service = ServiceProvider.service(AIService)
+    return ai_service.analyze_text(paper_text, "summary", {"type": "research_paper"})
 
-@capture_error
-@timer(label="AI-Notes-Generation")
-def generate_ai_notes(request_data, user_data=None, paper_text=None):
+def generate_ai_notes(request_data):
     """
-    Generate AI-powered notes for a request.
+    Generate AI notes for a request.
     
     Args:
-        request_data: Request information
-        user_data: Optional user information
-        paper_text: Optional paper text
+        request_data: Request data
         
     Returns:
         str: Generated notes
     """
-    # Check if AI analysis is enabled
-    if not FeatureFlags.is_enabled("ai_analysis"):
-        logging.info("AI analysis is disabled, skipping notes generation")
-        return "AI analysis is currently disabled. Please review the request manually."
+    from app.services.service_provider import ServiceProvider
     
-    try:
-        # Construct context
-        context = f"""
-        Faculty: {user_data['name'] if user_data else request_data.get('faculty_name', 'Unknown')}
-        Department: {user_data['department'] if user_data else request_data.get('department', 'Unknown')}
-        Conference: {request_data.get('conference_name', 'Unknown')}
-        Destination: {request_data.get('destination', 'Unknown')}, {request_data.get('city', 'Unknown')}
-        Dates: {request_data.get('date_from', 'Unknown')} to {request_data.get('date_to', 'Unknown')}
-        Purpose: {request_data.get('purpose_of_attending', 'Unknown')}
-        
-        Budget Details:
-        - Registration: ${request_data.get('registration_fee', 0)}
-        - Per Diem: ${request_data.get('per_diem', 0)}
-        - Visa Fee: ${request_data.get('visa_fee', 0)}
-        """
-        
-        if paper_text:
-            # Add truncated paper summary
-            max_paper_length = 3000
-            paper_summary = paper_text[:max_paper_length] + "..." if len(paper_text) > max_paper_length else paper_text
-            context += f"\n\nPaper Abstract: {paper_summary}"
-        
-        # Prepare prompt
-        prompt = f"""
-        Based on the following conference travel request:
-        
-        {context}
-        
-        Please provide helpful notes for the approver, including:
-        1. Assessment of the conference's relevance to the faculty's field
-        2. Assessment of the budget reasonableness
-        3. Any potential concerns or special considerations
-        4. Recommendation for approval or further review
-        
-        Keep your response concise and professional.
-        """
-        
-        # Choose AI provider based on configuration
-        ai_provider = os.getenv("AI_PROVIDER", "openai").lower()
-        
-        if ai_provider == "google":
-            response = _analyze_with_google_ai(prompt)
-            return response.get("text", "Error generating notes. Please review manually.")
-        else:
-            response = _analyze_with_openai(prompt)
-            return response.get("text", "Error generating notes. Please review manually.")
-            
-    except Exception as e:
-        logging.error(f"Error generating AI notes: {str(e)}")
-        return f"Error generating AI notes: {str(e)}. Please review the request manually."
+    ai_service = ServiceProvider.service(AIService)
+    
+    prompt = f"""
+    Generate concise notes for a travel request with the following details:
+    
+    Conference: {request_data.get('conference_name', 'Unknown')}
+    Destination: {request_data.get('destination', 'Unknown')}, {request_data.get('city', 'Unknown')}
+    Dates: {request_data.get('date_from', 'Unknown')} to {request_data.get('date_to', 'Unknown')}
+    Total Cost: ${request_data.get('total_cost', 0):,.2f}
+    Purpose: {request_data.get('purpose_of_attending', 'Unknown')}
+    
+    The notes should highlight key points for approval consideration.
+    """
+    
+    return ai_service.generate_text(prompt)
 
-def _analyze_with_openai(prompt):
-    """Use OpenAI API for analysis."""
-    try:
-        response = openai.ChatCompletion.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
-            messages=[
-                {"role": "system", "content": "You are a helpful academic assistant analyzing conference travel requests."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-            max_tokens=1500
-        )
+def generate_conference_summary(conference_url):
+    """
+    Generate a summary of a conference from its URL.
+    
+    Args:
+        conference_url: Conference website URL
         
-        output = response.choices[0].message.content.strip()
-        
-        # Parse output into structured format
-        import re
-        
-        # For conference validation
-        if "legitimacy determination" in prompt.lower():
-            legitimate = "legitimate" in output.lower() and "not legitimate" not in output.lower()
-            
-            # Extract confidence
-            confidence_match = re.search(r'confidence level:?\s*(0\.\d+|1\.0)', output, re.IGNORECASE)
-            confidence = float(confidence_match.group(1)) if confidence_match else 0.5
-            
-            # Extract issues
-            issues = []
-            issues_section = re.search(r'potential issues:?\s*(.*?)(?:\n\n|$)', output, re.IGNORECASE | re.DOTALL)
-            if issues_section:
-                issue_text = issues_section.group(1)
-                # Look for list items
-                list_items = re.findall(r'(?:^|\n)(?:- |\d+\. )(.*?)(?:\n|$)', issue_text)
-                if list_items:
-                    issues = [item.strip() for item in list_items if item.strip()]
-                else:
-                    # No list format, use the whole section
-                    issues = [issue_text.strip()]
-            
-            return {
-                "legitimate": legitimate,
-                "confidence": confidence,
-                "notes": output,
-                "potential_issues": issues
-            }
-            
-        # For paper analysis and general notes
-        return {
-            "text": output
-        }
-        
-    except Exception as e:
-        logging.error(f"Error with OpenAI API: {str(e)}")
-        raise
-
-def _analyze_with_google_ai(prompt):
-    """Use Google Generative AI for analysis."""
-    try:
-        model = genai.GenerativeModel(os.getenv("GOOGLE_AI_MODEL", "gemini-pro"))
-        response = model.generate_content(prompt)
-        
-        output = response.text.strip()
-        
-        # Parse output similar to OpenAI function
-        import re
-        
-        # For conference validation
-        if "legitimacy determination" in prompt.lower():
-            legitimate = "legitimate" in output.lower() and "not legitimate" not in output.lower()
-            
-            # Extract confidence
-            confidence_match = re.search(r'confidence level:?\s*(0\.\d+|1\.0)', output, re.IGNORECASE)
-            confidence = float(confidence_match.group(1)) if confidence_match else 0.5
-            
-            # Extract issues
-            issues = []
-            issues_section = re.search(r'potential issues:?\s*(.*?)(?:\n\n|$)', output, re.IGNORECASE | re.DOTALL)
-            if issues_section:
-                issue_text = issues_section.group(1)
-                # Look for list items
-                list_items = re.findall(r'(?:^|\n)(?:- |\d+\. )(.*?)(?:\n|$)', issue_text)
-                if list_items:
-                    issues = [item.strip() for item in list_items if item.strip()]
-                else:
-                    # No list format, use the whole section
-                    issues = [issue_text.strip()]
-            
-            return {
-                "legitimate": legitimate,
-                "confidence": confidence,
-                "notes": output,
-                "potential_issues": issues
-            }
-            
-        # For paper analysis and general notes
-        return {
-            "text": output
-        }
-        
-    except Exception as e:
-        logging.error(f"Error with Google AI API: {str(e)}")
-        raise
-
-def _process_paper_analysis(response):
-    """Process and structure the paper analysis response."""
-    try:
-        text = response.get("text", "")
-        import re
-        
-        # Extract quality score
-        score_match = re.search(r'quality score:?\s*(0\.\d+|1\.0)', text, re.IGNORECASE)
-        quality_score = float(score_match.group(1)) if score_match else 0.5
-        
-        # Extract summary
-        summary_match = re.search(r'summary:?\s*(.*?)(?:\n\n|\n(?=\d+\.)|\n(?=Key strengths))', text, re.IGNORECASE | re.DOTALL)
-        summary = summary_match.group(1).strip() if summary_match else "No summary provided."
-        
-        # Extract strengths
-        strengths = []
-        strengths_section = re.search(r'(?:key )?strengths:?\s*(.*?)(?:\n\n|\n(?=\d+\.)|\n(?=Potential weaknesses))', text, re.IGNORECASE | re.DOTALL)
-        if strengths_section:
-            strength_text = strengths_section.group(1)
-            # Look for list items
-            list_items = re.findall(r'(?:^|\n)(?:- |\d+\. )(.*?)(?:\n|$)', strength_text)
-            if list_items:
-                strengths = [item.strip() for item in list_items if item.strip()]
-            
-        # Extract weaknesses
-        weaknesses = []
-        weaknesses_section = re.search(r'(?:potential )?weaknesses:?\s*(.*?)(?:\n\n|\n(?=\d+\.)|\n(?=Specific suggestions))', text, re.IGNORECASE | re.DOTALL)
-        if weaknesses_section:
-            weakness_text = weaknesses_section.group(1)
-            # Look for list items
-            list_items = re.findall(r'(?:^|\n)(?:- |\d+\. )(.*?)(?:\n|$)', weakness_text)
-            if list_items:
-                weaknesses = [item.strip() for item in list_items if item.strip()]
-        
-        # Extract suggestions
-        suggestions = []
-        suggestions_section = re.search(r'(?:specific )?suggestions:?\s*(.*?)(?:\n\n|$)', text, re.IGNORECASE | re.DOTALL)
-        if suggestions_section:
-            suggestion_text = suggestions_section.group(1)
-            # Look for list items
-            list_items = re.findall(r'(?:^|\n)(?:- |\d+\. )(.*?)(?:\n|$)', suggestion_text)
-            if list_items:
-                suggestions = [item.strip() for item in list_items if item.strip()]
-        
-        # Ensure all lists have at least one item
-        if not strengths:
-            strengths = ["No specific strengths identified."]
-        if not weaknesses:
-            weaknesses = ["No specific weaknesses identified."]
-        if not suggestions:
-            suggestions = ["No specific suggestions provided."]
-        
-        return {
-            "quality_score": quality_score,
-            "summary": summary,
-            "strengths": strengths,
-            "weaknesses": weaknesses,
-            "suggestions": suggestions
-        }
-        
-    except Exception as e:
-        logging.error(f"Error processing paper analysis: {str(e)}")
-        return {
-            "quality_score": 0.5,
-            "summary": "Error processing analysis.",
-            "strengths": ["Processing error"],
-            "weaknesses": ["Processing error"],
-            "suggestions": ["Please review manually"]
-        }
+    Returns:
+        dict: Conference summary
+    """
+    from app.services.service_provider import ServiceProvider
+    
+    ai_service = ServiceProvider.service(AIService)
+    
+    # This would normally involve fetching the website content first
+    # For simplicity, we'll just use the URL as context
+    return ai_service.analyze_text(conference_url, "summary", {"type": "conference"})

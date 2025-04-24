@@ -40,6 +40,9 @@ from app.services.ai_service import (
 )
 from app.services.report_service import generate_request_pdf
 from app.utils.security import sanitize_input
+from app.ui.components import FormBuilder, form_builder
+from app.services.service_provider import ServiceProvider
+from app.utils.error_handling import handle_exceptions
 
 def show_professor_dashboard():
     """Professor main dashboard"""
@@ -69,254 +72,246 @@ def show_professor_dashboard():
     with tabs[3]:
         show_research_analysis()
 
+@handle_exceptions(show_error_to_user=True, default_message="Error submitting request")
 def show_request_submission_form():
     """Display the conference travel request submission form"""
-    st.subheader("Submit Conference Travel Request")
+    st.subheader(t("professor.submit_request", "Submit Conference Travel Request"))
     
-    # Check budget availability
-    total_budget, total_expenses, remaining_budget = calculate_remaining_budget()
+    # Define form fields
+    form_fields = [
+        {
+            'name': 'section_conference', 
+            'type': 'section', 
+            'label': t("professor.conference_info", "Conference Information"),
+            'description': t("professor.conference_desc", "Enter details about the conference you wish to attend.")
+        },
+        {
+            'name': 'conference_name', 
+            'type': 'text', 
+            'label': t("professor.conference_name", "Conference Name"),
+            'required': True,
+            'validators': [Validator.required(), Validator.min_length(3)]
+        },
+        {
+            'name': 'conference_url', 
+            'type': 'text', 
+            'label': t("professor.conference_url", "Conference Website URL"),
+            'required': True,
+            'validators': [Validator.required(), Validator.url()]
+        },
+        {
+            'name': 'section_location', 
+            'type': 'section', 
+            'label': t("professor.location", "Location")
+        },
+        {
+            'name': 'destination', 
+            'type': 'text', 
+            'label': t("professor.destination", "Destination Country"),
+            'required': True,
+            'validators': [Validator.required()]
+        },
+        {
+            'name': 'city', 
+            'type': 'text', 
+            'label': t("professor.city", "City"),
+            'required': True,
+            'validators': [Validator.required()]
+        },
+        {
+            'name': 'section_dates', 
+            'type': 'section', 
+            'label': t("professor.travel_dates", "Travel Dates")
+        },
+        {
+            'name': 'date_from', 
+            'type': 'date', 
+            'label': t("professor.date_from", "From Date"),
+            'required': True,
+            'default': datetime.now() + timedelta(days=30),
+            'validators': [Validator.required()]
+        },
+        {
+            'name': 'date_to', 
+            'type': 'date', 
+            'label': t("professor.date_to", "To Date"),
+            'required': True,
+            'default': datetime.now() + timedelta(days=35),
+            'validators': [Validator.required()]
+        },
+        {
+            'name': 'section_budget', 
+            'type': 'section', 
+            'label': t("professor.budget_info", "Budget Information")
+        },
+        {
+            'name': 'registration_fee', 
+            'type': 'number', 
+            'label': t("professor.registration_fee", "Registration Fee (USD)"),
+            'required': True,
+            'min': 0,
+            'default': 0,
+            'validators': [Validator.required(), Validator.min_value(0)]
+        },
+        {
+            'name': 'accommodation_cost', 
+            'type': 'number', 
+            'label': t("professor.accommodation", "Accommodation Cost (USD)"),
+            'required': True,
+            'min': 0,
+            'default': 0,
+            'validators': [Validator.required(), Validator.min_value(0)]
+        },
+        {
+            'name': 'transportation_cost', 
+            'type': 'number', 
+            'label': t("professor.transportation", "Transportation Cost (USD)"),
+            'required': True,
+            'min': 0,
+            'default': 0,
+            'validators': [Validator.required(), Validator.min_value(0)]
+        },
+        {
+            'name': 'per_diem', 
+            'type': 'number', 
+            'label': t("professor.per_diem", "Per Diem (USD)"),
+            'required': True,
+            'min': 0,
+            'default': 0,
+            'validators': [Validator.required(), Validator.min_value(0)]
+        },
+        {
+            'name': 'visa_fee', 
+            'type': 'number', 
+            'label': t("professor.visa_fee", "Visa Fee (USD)"),
+            'required': False,
+            'min': 0,
+            'default': 0,
+            'validators': [Validator.min_value(0)]
+        },
+        {
+            'name': 'section_other', 
+            'type': 'section', 
+            'label': t("professor.additional_info", "Additional Information")
+        },
+        {
+            'name': 'purpose_of_attending', 
+            'type': 'textarea', 
+            'label': t("professor.purpose", "Purpose of Attending"),
+            'required': True,
+            'validators': [Validator.required(), Validator.min_length(20)]
+        },
+        {
+            'name': 'documents', 
+            'type': 'file', 
+            'label': t("professor.documents", "Upload Documents"),
+            'multiple': True,
+            'accept': ['pdf', 'docx', 'doc'],
+            'help': t("professor.documents_help", "Upload conference invitation, abstract, or other supporting documents")
+        }
+    ]
     
-    if remaining_budget <= 0:
-        display_warning_box(
-            "⚠️ The conference travel budget has been fully allocated. "
-            "Your request can still be submitted but approval may be delayed."
-        )
-    else:
-        display_info_box(
-            f"Current remaining budget: ${remaining_budget:,.2f} "
-            f"(Used: ${total_expenses:,.2f} of ${total_budget:,.2f})"
+    # Handle form submission
+    submitted, form_data = form_builder.create_form(
+        "travel_request_form",
+        form_fields,
+        submit_label=t("buttons.submit_request", "Submit Request"),
+        on_submit=handle_form_submission,
+        columns=2  # Use 2 columns for better layout
+    )
+    
+    if submitted:
+        display_success_box(t("professor.request_submitted", "Request submitted successfully"))
+        st.balloons()  # Celebratory balloons!
+
+def handle_form_submission(form_data):
+    """
+    Handle form submission with service provider.
+    
+    Args:
+        form_data: Form data dictionary
+        
+    Returns:
+        bool: Success status
+    """
+    # Validate date range
+    if form_data['date_from'] > form_data['date_to']:
+        display_error_box(t("validation.date_range", "End date must be after start date"))
+        return False
+    
+    # Calculate total cost
+    total_cost = (
+        form_data['registration_fee'] +
+        form_data['accommodation_cost'] +
+        form_data['transportation_cost'] +
+        form_data['per_diem'] +
+        form_data['visa_fee']
+    )
+    
+    # Prepare request data
+    request_data = {
+        'faculty_user_id': st.session_state.logged_in_user,
+        'conference_name': form_data['conference_name'],
+        'conference_url': form_data['conference_url'],
+        'destination': form_data['destination'],
+        'city': form_data['city'],
+        'date_from': form_data['date_from'].strftime("%Y-%m-%d"),
+        'date_to': form_data['date_to'].strftime("%Y-%m-%d"),
+        'registration_fee': form_data['registration_fee'],
+        'accommodation_cost': form_data['accommodation_cost'],
+        'transportation_cost': form_data['transportation_cost'],
+        'per_diem': form_data['per_diem'],
+        'visa_fee': form_data['visa_fee'],
+        'total_cost': total_cost,
+        'purpose_of_attending': form_data['purpose_of_attending'],
+        'status': 'pending',
+        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    
+    # Save request using repository
+    request_repo = ServiceProvider.db_repository(RequestRepository)
+    request_id = request_repo.create(request_data)
+    
+    if not request_id:
+        display_error_box(t("error.request_creation", "Failed to create request"))
+        return False
+    
+    # Process documents if any
+    documents = form_data.get('documents', [])
+    if documents:
+        doc_repo = ServiceProvider.db_repository(DocumentRepository)
+        
+        for doc in documents:
+            # Extract file information
+            file_name = doc.name
+            file_content = doc.getvalue()
+            file_type = doc.type
+            
+            # Save document
+            doc_repo.add_document(
+                request_id=request_id,
+                file_name=file_name,
+                file_type=file_type,
+                file_content=file_content
+            )
+    
+    # Create notification for approval authorities
+    notification_service = ServiceProvider.service(NotificationService)
+    
+    # Find approval authorities
+    user_repo = ServiceProvider.db_repository(UserRepository)
+    approvers = user_repo.find_all(where="role = %s", params=("approval",))
+    
+    # Notify each approver
+    for approver in approvers:
+        notification_service.create_notification(
+            user_id=approver['user_id'],
+            message=f"New travel request from {st.session_state.user_name} for {form_data['conference_name']}",
+            notification_type="info",
+            related_id=request_id
         )
     
-    # Auto-fill feature with uploaded research paper
-    autofill_col1, autofill_col2 = st.columns([3, 1])
-    
-    with autofill_col1:
-        research_paper_for_autofill = st.file_uploader(
-            "Upload your research paper for auto-filling form fields",
-            type=["pdf", "docx"],
-            key="autofill_paper"
-        )
-    
-    autofill_data = None
-    if research_paper_for_autofill:
-        with autofill_col2:
-            if st.button("Auto-fill Form", key="btn_autofill"):
-                with show_loading_spinner("Analyzing paper to auto-fill form..."):
-                    autofill_data = get_autofill(research_paper_for_autofill)
-                if autofill_data:
-                    st.success("Form fields auto-filled based on your paper")
-                else:
-                    st.error("Could not extract information for auto-filling")
-    
-    # Main request form
-    with st.form("request_form", clear_on_submit=False):
-        # Conference details
-        st.markdown("### Conference Details")
-        conf_name = st.text_input(
-            "Conference Name",
-            value=autofill_data.get('conference_name', '') if autofill_data else '',
-            help="Enter the full name of the conference"
-        )
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            purpose = st.selectbox(
-                "Purpose of Attending",
-                options=["Attending a Conference", "Presenting at a Conference"],
-                help="Select your primary purpose for attending"
-            )
-        
-        with col2:
-            index_type = st.selectbox(
-                "Conference Index",
-                options=["Scopus", "IEEE", "Web of Science", "PubMed", "MEDLINE", "ACM", "None"],
-                help="Select the academic index this conference is listed in"
-            )
-        
-        conf_url = st.text_input(
-            "Conference URL",
-            help="Enter the official conference website URL"
-        )
-        
-        # Travel details
-        st.markdown("### Travel Information")
-        col1, col2 = st.columns(2)
-        with col1:
-            destination = st.text_input(
-                "Destination Country",
-                value=autofill_data.get('location', '').split(',')[-1].strip() if autofill_data and ',' in autofill_data.get('location', '') else '',
-                help="Enter the country where the conference is held"
-            )
-        
-        with col2:
-            city = st.text_input(
-                "City",
-                value=autofill_data.get('location', '').split(',')[0].strip() if autofill_data and ',' in autofill_data.get('location', '') else '',
-                help="Enter the city where the conference is held"
-            )
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            date_from = st.date_input(
-                "Start Date",
-                value=datetime.now() + timedelta(days=30),
-                help="Select the first day of your travel"
-            )
-        
-        with col2:
-            date_to = st.date_input(
-                "End Date",
-                value=datetime.now() + timedelta(days=35),
-                help="Select the last day of your travel"
-            )
-        
-        # Financial information
-        st.markdown("### Financial Information")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            per_diem = st.number_input(
-                "Per Diem (USD)",
-                min_value=0,
-                value=200,
-                help="Daily allowance for accommodation and meals"
-            )
-        
-        with col2:
-            registration_fee = st.number_input(
-                "Registration Fee (USD)",
-                min_value=0,
-                value=500,
-                help="Conference registration fee"
-            )
-        
-        with col3:
-            visa_fee = st.number_input(
-                "Visa Fee (USD)",
-                min_value=0,
-                value=0,
-                help="Visa application fee if applicable"
-            )
-        
-        # Document uploads
-        st.markdown("### Required Documents")
-        research_paper = st.file_uploader(
-            "Research Paper",
-            type=["pdf", "docx"],
-            help="Upload your research paper for the conference"
-        )
-        
-        acceptance_letter = st.file_uploader(
-            "Acceptance Letter",
-            type=["pdf", "docx"],
-            help="Upload the conference acceptance letter"
-        )
-        
-        # Notes and additional information
-        st.markdown("### Additional Information")
-        notes = st.text_area(
-            "Additional Notes",
-            help="Any additional information or special requirements"
-        )
-        
-        # Submit button
-        submitted = st.form_submit_button("Submit Request")
-        
-        if submitted:
-            # Validate required fields
-            if not conf_name or not destination or not city:
-                st.error("Please fill in all required fields")
-                return
-            
-            if date_from > date_to:
-                st.error("End date must be after start date")
-                return
-            
-            # Validate required documents
-            if not research_paper or not acceptance_letter:
-                st.error("Please upload both the research paper and acceptance letter")
-                return
-            
-            # First validate the documents
-            with show_loading_spinner("Validating documents..."):
-                # Extract text from documents
-                try:
-                    paper_text = extract_text_from_file(research_paper)
-                    acceptance_text = extract_text_from_file(acceptance_letter)
-                    
-                    # Generate summaries using AI
-                    conference_summary = generate_conference_summary(acceptance_text, conf_name)
-                    research_summary = "Research paper uploaded and validated."
-                    notes_summary = generate_ai_notes(conf_name, purpose, index_type, destination, city)
-                    url_summary = "Conference URL verified."
-                    
-                    # Validate with AI
-                    validation_result = validate_with_gpt(
-                        conf_name, paper_text, acceptance_text, index_type, conf_url
-                    )
-                    
-                    is_valid = validation_result.get('valid', False)
-                    
-                    if not is_valid:
-                        st.error("Document validation failed. Please check your documents and try again.")
-                        st.write(validation_result.get('observations', ''))
-                        return
-                    
-                except Exception as e:
-                    logging.error(f"Error processing documents: {str(e)}")
-                    st.error(f"Error processing documents: {str(e)}")
-                    return
-            
-            # Create request data
-            request_data = {
-                'conference_name': sanitize_input(conf_name),
-                'purpose_of_attending': purpose,
-                'conference_url': sanitize_input(conf_url),
-                'url_summary': url_summary,
-                'destination': sanitize_input(destination),
-                'city': sanitize_input(city),
-                'date_from': date_from,
-                'date_to': date_to,
-                'per_diem': per_diem,
-                'registration_fee': registration_fee,
-                'visa_fee': visa_fee,
-                'conference_summary': conference_summary,
-                'research_summary': research_summary,
-                'notes_summary': notes_summary,
-                'index_type': index_type
-            }
-            
-            # Save request to database
-            user_id = st.session_state.logged_in_user
-            
-            try:
-                request_id = create_request(user_id, request_data)
-                
-                if request_id:
-                    # Save uploaded documents
-                    save_document(
-                        request_id,
-                        research_paper.name,
-                        "research_paper",
-                        research_paper.getvalue(),
-                        research_paper.size
-                    )
-                    
-                    save_document(
-                        request_id,
-                        acceptance_letter.name,
-                        "acceptance_letter",
-                        acceptance_letter.getvalue(),
-                        acceptance_letter.size
-                    )
-                    
-                    display_success_box("Your conference travel request has been submitted successfully!")
-                    st.balloons()
-                else:
-                    st.error("Failed to submit request. Please try again.")
-            
-            except Exception as e:
-                logging.error(f"Error submitting request: {str(e)}")
-                st.error(f"An error occurred: {str(e)}")
+    return True
 
 def show_my_requests():
     """Display list of user's submitted requests"""

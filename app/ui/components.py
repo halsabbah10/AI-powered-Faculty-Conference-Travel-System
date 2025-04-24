@@ -646,3 +646,241 @@ def show_confirmation_dialog(title, message, confirm_label="Confirm", cancel_lab
                 return False
     
     return False
+
+class FormBuilder:
+    """
+    Enhanced form building utility for creating consistent forms.
+    Reduces duplication across UI components.
+    """
+    
+    @staticmethod
+    def create_form(form_id, fields, submit_label="Submit", on_submit=None, columns=1):
+        """
+        Create a standardized form with validation and organized layout.
+        
+        Args:
+            form_id: Unique form identifier
+            fields: List of field definitions
+            submit_label: Label for submit button
+            on_submit: Callback function for form submission
+            columns: Number of columns for form layout
+            
+        Returns:
+            tuple: (was_submitted, form_data)
+        """
+        form_data = {}
+        
+        with st.form(form_id):
+            # Organize fields into columns if requested
+            if columns > 1:
+                # Calculate approximate field distribution
+                fields_per_column = max(1, len(fields) // columns)
+                column_fields = [[] for _ in range(columns)]
+                
+                # Distribute fields among columns
+                for i, field in enumerate(fields):
+                    col_index = min(i // fields_per_column, columns - 1)
+                    column_fields[col_index].append(field)
+                
+                # Create columns
+                cols = st.columns(columns)
+                
+                # Render fields in each column
+                for i, col_fields in enumerate(column_fields):
+                    with cols[i]:
+                        for field in col_fields:
+                            form_data = FormBuilder._add_field(form_data, field, f"{form_id}_col{i}")
+            else:
+                # Render fields in a single column
+                for field in fields:
+                    form_data = FormBuilder._add_field(form_data, field, form_id)
+            
+            # Submit button
+            submitted = st.form_submit_button(t(f"buttons.{submit_label}", submit_label))
+            
+            if submitted and on_submit:
+                # Find validators for fields
+                validators = {
+                    field['name']: field.get('validators', [])
+                    for field in fields
+                    if 'validators' in field
+                }
+                
+                # Validate form data
+                if validators:
+                    from app.utils.validation import Validator
+                    is_valid, errors = Validator.validate_form(form_data, validators)
+                    
+                    if not is_valid:
+                        display_form_errors(errors)
+                        return False, form_data
+                
+                # Call submission handler
+                result = on_submit(form_data)
+                if result is False:
+                    return False, form_data
+        
+        return submitted, form_data
+    
+    @staticmethod
+    def _add_field(form_data, field, form_prefix):
+        """
+        Add a field to the form data.
+        
+        Args:
+            form_data: Current form data dictionary
+            field: Field definition
+            form_prefix: Prefix for form fields
+            
+        Returns:
+            dict: Updated form data
+        """
+        field_name = field.get('name', '')
+        field_type = field.get('type', 'text')
+        label = t(field.get('label_key', f"fields.{field_name}"), field.get('label', field_name))
+        required = field.get('required', False)
+        help_text = field.get('help', None)
+        
+        if help_text:
+            help_text = t(f"help.{field_name}", help_text)
+        
+        display_label = f"{label} *" if required else label
+        key = f"{form_prefix}_{field_name}"
+        
+        # Handle different field types
+        if field_type == 'text':
+            form_data[field_name] = st.text_input(
+                display_label,
+                value=field.get('default', ''),
+                help=help_text,
+                key=key
+            )
+        
+        elif field_type == 'number':
+            form_data[field_name] = st.number_input(
+                display_label,
+                min_value=field.get('min'),
+                max_value=field.get('max'),
+                value=field.get('default', 0),
+                step=field.get('step', 1),
+                help=help_text,
+                key=key
+            )
+        
+        elif field_type == 'date':
+            form_data[field_name] = st.date_input(
+                display_label,
+                value=field.get('default', datetime.now()),
+                help=help_text,
+                key=key
+            )
+        
+        elif field_type == 'select':
+            # Get options with proper translation
+            options = field.get('options', [])
+            display_options = options
+            
+            # Check if we need to translate options
+            if field.get('translate_options', False):
+                option_prefix = field.get('option_prefix', f"{field_name}_options")
+                display_options = [t(f"{option_prefix}.{opt}", opt) for opt in options]
+            
+            form_data[field_name] = st.selectbox(
+                display_label,
+                options=options,
+                format_func=lambda x: display_options[options.index(x)] if x in options else x,
+                index=field.get('default_index', 0),
+                help=help_text,
+                key=key
+            )
+        
+        elif field_type == 'multiselect':
+            # Get options with proper translation
+            options = field.get('options', [])
+            display_options = options
+            
+            # Check if we need to translate options
+            if field.get('translate_options', False):
+                option_prefix = field.get('option_prefix', f"{field_name}_options")
+                display_options = [t(f"{option_prefix}.{opt}", opt) for opt in options]
+            
+            form_data[field_name] = st.multiselect(
+                display_label,
+                options=options,
+                format_func=lambda x: display_options[options.index(x)] if x in options else x,
+                default=field.get('default', []),
+                help=help_text,
+                key=key
+            )
+        
+        elif field_type == 'textarea':
+            form_data[field_name] = st.text_area(
+                display_label,
+                value=field.get('default', ''),
+                height=field.get('height', 100),
+                help=help_text,
+                key=key
+            )
+        
+        elif field_type == 'checkbox':
+            form_data[field_name] = st.checkbox(
+                display_label,
+                value=field.get('default', False),
+                help=help_text,
+                key=key
+            )
+        
+        elif field_type == 'file':
+            form_data[field_name] = st.file_uploader(
+                display_label,
+                type=field.get('accept', None),
+                accept_multiple_files=field.get('multiple', False),
+                help=help_text,
+                key=key
+            )
+        
+        elif field_type == 'radio':
+            # Get options with proper translation
+            options = field.get('options', [])
+            display_options = options
+            
+            # Check if we need to translate options
+            if field.get('translate_options', False):
+                option_prefix = field.get('option_prefix', f"{field_name}_options")
+                display_options = [t(f"{option_prefix}.{opt}", opt) for opt in options]
+            
+            form_data[field_name] = st.radio(
+                display_label,
+                options=options,
+                format_func=lambda x: display_options[options.index(x)] if x in options else x,
+                index=field.get('default_index', 0),
+                horizontal=field.get('horizontal', False),
+                help=help_text,
+                key=key
+            )
+        
+        elif field_type == 'slider':
+            form_data[field_name] = st.slider(
+                display_label,
+                min_value=field.get('min', 0),
+                max_value=field.get('max', 100),
+                value=field.get('default', 50),
+                step=field.get('step', 1),
+                help=help_text,
+                key=key
+            )
+        
+        elif field_type == 'section':
+            # Section header - doesn't add data
+            st.subheader(display_label)
+            if field.get('description'):
+                st.write(t(f"section.{field_name}_desc", field.get('description')))
+        
+        elif field_type == 'divider':
+            # Visual divider
+            st.markdown("---")
+        
+        return form_data
+
+# Create global form builder instance for convenience
+form_builder = FormBuilder()
