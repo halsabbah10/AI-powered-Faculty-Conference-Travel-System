@@ -26,6 +26,12 @@ from app.ui.approval import show_approval_dashboard
 # Import database functionality
 from app.database.queries import get_user_by_id, log_user_activity
 
+# Import responsive design functionality
+from app.utils.responsive import add_responsive_css
+
+# Import notification service
+from app.services.notification_service import display_notifications, check_for_notifications
+
 # Set up logging
 setup_logging()
 
@@ -81,6 +87,10 @@ def show_admin_panel():
 
 def main():
     """Main application entry point"""
+    # Initialize internationalization
+    from app.utils.internationalization import init_localization
+    init_localization()
+    
     # Initialize error monitoring
     from app.utils.error_monitoring import init_error_monitoring
     init_error_monitoring()
@@ -89,23 +99,50 @@ def main():
     from app.utils.accessibility import add_accessibility_features
     add_accessibility_features()
     
-    # Display user info in sidebar if logged in
-    if "logged_in_user" in st.session_state and st.session_state.logged_in_user:
-        display_user_info()
+    # Load custom CSS
+    load_css()
     
-    # Check if user is logged in
+    # Add responsive CSS for better mobile experience
+    add_responsive_css()
+    
+    # Set page config
+    st.set_page_config(
+        page_title="Faculty Conference Travel System",
+        page_icon="✈️",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Check for new notifications
+    if "logged_in_user" in st.session_state:
+        check_for_notifications()
+    
+    # Check login status
     if not check_session():
         show_login_page()
         return
     
-    # Route to appropriate dashboard based on role
-    if st.session_state.user_role == "professor":
+    # Display user info in sidebar
+    display_user_info()
+    
+    # Display language selector
+    from app.ui.common import display_language_selector
+    display_language_selector()
+    
+    # Display notifications in sidebar
+    display_notifications()
+    
+    # Get user role
+    user_role = st.session_state.get("user_role", "")
+    
+    # Create sidebar navigation based on role
+    if user_role == "professor":
         show_professor_dashboard()
-    elif st.session_state.user_role == "accountant":
+    elif user_role == "accountant":
         show_accountant_dashboard()
-    elif st.session_state.user_role == "approval":
+    elif user_role == "approval":
         show_approval_dashboard()
-    elif st.session_state.user_role == "admin":
+    elif user_role == "admin":
         show_admin_panel()
     else:
         st.error("Unknown user role. Please contact system administrator.")

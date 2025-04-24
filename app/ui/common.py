@@ -10,6 +10,7 @@ from datetime import datetime
 from urllib.parse import parse_qs
 import re
 import pandas as pd
+from app.utils.internationalization import t, switch_language
 
 def load_css():
     """Load custom CSS for styling the application"""
@@ -123,37 +124,45 @@ def display_header(title, show_logout=True):
     col1, col2, col3 = st.columns([1, 3, 1])
     
     with col2:
-        st.markdown(f"<h1 class='main-header'>{title}</h1>", unsafe_allow_html=True)
+        localized_title = t(f"headers.{title}", title)
+        st.markdown(f"<h1 class='main-header'>{localized_title}</h1>", unsafe_allow_html=True)
     
     if show_logout and st.session_state.logged_in_user:
         with col3:
-            if st.button("Logout", key="logout_btn", help="Log out of the system"):
+            if st.button(t("common.logout", "Logout"), key="logout_btn", help=t("common.logout_help", "Log out of the system")):
                 from app.auth.login import logout
                 logout()
                 st.experimental_rerun()
 
 def display_info_box(message):
     """Display formatted information box"""
-    st.markdown(f"<div class='info-box'>{message}</div>", unsafe_allow_html=True)
+    localized_message = t(message, message)
+    st.markdown(f"<div class='info-box'>{localized_message}</div>", unsafe_allow_html=True)
 
 def display_success_box(message):
     """Display formatted success box"""
-    st.markdown(f"<div class='success-box'>{message}</div>", unsafe_allow_html=True)
+    localized_message = t(message, message)
+    st.markdown(f"<div class='success-box'>{localized_message}</div>", unsafe_allow_html=True)
 
 def display_warning_box(message):
     """Display formatted warning box"""
-    st.markdown(f"<div class='warning-box'>{message}</div>", unsafe_allow_html=True)
+    localized_message = t(message, message)
+    st.markdown(f"<div class='warning-box'>{localized_message}</div>", unsafe_allow_html=True)
 
 def display_error_box(message):
     """Display formatted error box"""
-    st.markdown(f"<div class='error-box'>{message}</div>", unsafe_allow_html=True)
+    localized_message = t(message, message)
+    st.markdown(f"<div class='error-box'>{localized_message}</div>", unsafe_allow_html=True)
 
 def display_footer():
     """Display application footer"""
     current_year = datetime.now().year
+    app_name = t("common.app_title", "Faculty Conference Travel System")
+    version = t("common.version", "Version 1.0.0")
+    
     st.markdown(f"""
     <div class='footer'>
-        © {current_year} Faculty Conference Travel System | Version 1.0.0
+        © {current_year} {app_name} | {version}
     </div>
     """, unsafe_allow_html=True)
 
@@ -201,15 +210,15 @@ def paginate_dataframe(df, page_size=10):
     col1, col2, col3 = st.columns([1, 3, 1])
     
     with col1:
-        if st.button("< Previous"):
+        if st.button(t("common.previous", "< Previous")):
             st.session_state.pagination_page = max(0, st.session_state.pagination_page - 1)
             st.experimental_rerun()
     
     with col2:
-        st.write(f"Page {st.session_state.pagination_page + 1} of {n_pages}")
+        st.write(t("common.page_of", "Page {0} of {1}").format(st.session_state.pagination_page + 1, n_pages))
     
     with col3:
-        if st.button("Next >"):
+        if st.button(t("common.next", "Next >")):
             st.session_state.pagination_page = min(n_pages - 1, st.session_state.pagination_page + 1)
             st.experimental_rerun()
     
@@ -368,3 +377,9 @@ def add_responsive_css():
     }
     </style>
     """, unsafe_allow_html=True)
+
+def display_language_selector():
+    """Display language selector in the sidebar"""
+    with st.sidebar:
+        if switch_language():
+            st.experimental_rerun()

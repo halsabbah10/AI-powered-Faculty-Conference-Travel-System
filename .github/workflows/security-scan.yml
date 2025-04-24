@@ -1,0 +1,86 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: "0 0 * * 0" # Run weekly on Sundays
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: "3.9"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit safety
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run Bandit (Static Code Analysis)
+        run: |
+          bandit -r app -f json -o bandit-results.json
+        continue-on-error: true
+
+      - name: Run Safety (Dependency Vulnerability Check)
+        run: |
+          safety check --full-report -o json > safety-results.json
+        continue-on-error: true
+
+      - name: Generate Security Report
+        run: |
+          echo "# Security Scan Results" > security-report.md
+          echo "## Bandit Static Code Analysis" >> security-report.md
+          echo '```' >> security-report.md
+          cat bandit-results.json >> security-report.md
+          echo '```' >> security-report.md
+          echo "## Safety Dependency Check" >> security-report.md
+          echo '```' >> security-report.md
+          cat safety-results.json >> security-report.md
+          echo '```' >> security-report.md
+
+      - name: Upload Security Report
+        uses: actions/upload-artifact@v2
+        with:
+          name: security-report
+          path: |
+            security-report.md
+            bandit-results.json
+            safety-results.json
+
+      - name: Secret Scanning
+        uses: zricethezav/gitleaks-action@master
+        continue-on-error: true
+
+      - name: OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: "FTCS"
+          path: "."
+          format: "HTML"
+          out: "reports"
+          args: >
+            --failOnCVSS 7
+            --enableRetired
+
+      - name: Upload OWASP Report
+        uses: actions/upload-artifact@v2
+        with:
+          name: dependency-check-report
+          path: reports
+
+      - name: Scan for SQL Injection
+        run: |
+          grep -r --include="*.py" "execute.*\(.*%" app || echo "No potential SQL injection patterns found"
+
+      - name: Check for hardcoded secrets
+        run: |
+          grep -r --include="*.py" -E "(password|api_key|secret|token).*=.*['\"]" app || echo "No hardcoded secrets patterns found"
