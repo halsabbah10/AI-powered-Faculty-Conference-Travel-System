@@ -60,11 +60,12 @@ def show_admin_panel():
     from app.utils.feature_flags import show_feature_flags_manager
     from app.utils.accessibility import show_accessibility_dashboard
     from app.utils.performance import show_performance_dashboard
+    from app.ui.configuration import show_configuration_panel
     
     st.sidebar.title("Admin Tools")
     admin_page = st.sidebar.radio(
         "Select Tool",
-        ["System Dashboard", "Feature Flags", "Performance", "Accessibility"]
+        ["System Dashboard", "Feature Flags", "Performance", "Accessibility", "Configuration"]
     )
     
     if admin_page == "System Dashboard":
@@ -75,6 +76,8 @@ def show_admin_panel():
         show_performance_dashboard()
     elif admin_page == "Accessibility":
         show_accessibility_dashboard()
+    elif admin_page == "Configuration":
+        show_configuration_panel()
 
 def main():
     """Main application entry point"""
