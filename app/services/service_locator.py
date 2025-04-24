@@ -1,129 +1,139 @@
 """
-Service locator module.
+Service Locator module.
 Provides centralized access to application services.
 """
 
 import logging
+from typing import Dict, Any, Type, Optional, TypeVar, Generic, cast
+import inspect
 from functools import lru_cache
+
+# Type variable for service interfaces
+T = TypeVar('T')
 
 class ServiceLocator:
     """
-    Service locator implementation for managing application dependencies.
+    Service locator pattern implementation.
     Provides centralized access to services with lazy initialization.
     """
     
-    _instances = {}
-    _factories = {}
+    # Dictionary of registered services
+    _services: Dict[str, Any] = {}
+    
+    # Dictionary of service factories
+    _factories: Dict[str, callable] = {}
+    
+    # Dictionary of service instances (singletons)
+    _instances: Dict[str, Any] = {}
+    
+    # Dictionary mapping interfaces to implementations
+    _interface_map: Dict[Type, Type] = {}
     
     @classmethod
-    def register(cls, service_name, factory=None, instance=None):
+    def register_service(cls, service_class: Type, interface_class: Optional[Type] = None) -> None:
         """
-        Register a service with the locator.
+        Register a service class.
         
         Args:
-            service_name: Unique name for the service
-            factory: Optional factory function to create the service
-            instance: Optional pre-created instance
-            
-        Returns:
-            None
+            service_class: The service implementation class
+            interface_class: Optional interface class that the service implements
         """
-        if instance is not None:
-            cls._instances[service_name] = instance
-        elif factory is not None:
-            cls._factories[service_name] = factory
-        else:
-            raise ValueError("Either factory or instance must be provided")
+        service_name = service_class.__name__
+        cls._services[service_name] = service_class
+        
+        # Register interface mapping if provided
+        if interface_class:
+            cls._interface_map[interface_class] = service_class
     
     @classmethod
-    def get(cls, service_name):
+    def register_factory(cls, service_name: str, factory_func: callable) -> None:
         """
-        Get a service instance.
+        Register a factory function for creating service instances.
         
         Args:
-            service_name: Name of the service to retrieve
+            service_name: Name of the service
+            factory_func: Factory function that creates the service
+        """
+        cls._factories[service_name] = factory_func
+    
+    @classmethod
+    def get_service(cls, service_name_or_class: Any) -> Any:
+        """
+        Get a service instance by name or class.
+        
+        Args:
+            service_name_or_class: Service name (str) or class (Type)
             
         Returns:
             Service instance
             
         Raises:
-            KeyError: If service is not registered
+            ValueError: If service is not found
         """
-        # Return existing instance if available
+        # Handle case where a class is provided
+        if inspect.isclass(service_name_or_class):
+            service_class = service_name_or_class
+            
+            # Check if this is an interface with a mapping
+            if service_class in cls._interface_map:
+                service_class = cls._interface_map[service_class]
+            
+            service_name = service_class.__name__
+        else:
+            service_name = service_name_or_class
+        
+        # Check if instance already exists
         if service_name in cls._instances:
             return cls._instances[service_name]
         
-        # Create new instance if factory is available
+        # Check if factory exists
         if service_name in cls._factories:
             instance = cls._factories[service_name]()
             cls._instances[service_name] = instance
             return instance
         
+        # Check if service class exists
+        if service_name in cls._services:
+            service_class = cls._services[service_name]
+            instance = service_class()
+            cls._instances[service_name] = instance
+            return instance
+        
         # Service not found
-        raise KeyError(f"Service '{service_name}' not registered")
+        raise ValueError(f"Service not found: {service_name}")
     
     @classmethod
-    def has(cls, service_name):
+    def get_service_by_interface(cls, interface_class: Type[T]) -> T:
         """
-        Check if a service is registered.
+        Get a service by its interface.
         
         Args:
-            service_name: Name of the service
+            interface_class: Interface class
             
         Returns:
-            bool: True if service is registered
-        """
-        return service_name in cls._instances or service_name in cls._factories
-    
-    @classmethod
-    def reset(cls, service_name=None):
-        """
-        Reset service instances.
-        
-        Args:
-            service_name: Optional specific service to reset
-                          If None, reset all services
+            Service instance that implements the interface
             
-        Returns:
-            None
+        Raises:
+            ValueError: If no implementation is registered for the interface
         """
-        if service_name is None:
-            # Reset all instances
-            cls._instances = {}
-        elif service_name in cls._instances:
-            # Reset specific instance
-            del cls._instances[service_name]
-    
-    @classmethod
-    def register_repositories(cls):
-        """Register all repository services."""
-        from app.database.repository import (
-            RequestRepository, UserRepository, 
-            BudgetRepository, DocumentRepository
-        )
+        if interface_class in cls._interface_map:
+            implementation_class = cls._interface_map[interface_class]
+            return cls.get_service(implementation_class)
         
-        cls.register('request_repository', lambda: RequestRepository())
-        cls.register('user_repository', lambda: UserRepository())
-        cls.register('budget_repository', lambda: BudgetRepository())
-        cls.register('document_repository', lambda: DocumentRepository())
+        raise ValueError(f"No implementation registered for interface: {interface_class.__name__}")
     
     @classmethod
-    def register_services(cls):
-        """Register all business services."""
-        from app.services.ai_service import AiService
-        from app.services.export_service import ExportService
-        from app.services.notification_service import NotificationService
-        
-        cls.register('ai_service', lambda: AiService())
-        cls.register('export_service', lambda: ExportService())
-        cls.register('notification_service', lambda: NotificationService())
+    def clear_instances(cls) -> None:
+        """Clear all service instances (for testing)."""
+        cls._instances.clear()
     
     @classmethod
-    def initialize(cls):
-        """Initialize all core services."""
-        cls.register_repositories()
-        cls.register_services()
-        logging.info("Service locator initialized")
+    def reset(cls) -> None:
+        """Reset the service locator (for testing)."""
+        cls._services.clear()
+        cls._factories.clear()
+        cls._instances.clear()
+        cls._interface_map.clear()
 
 
 # Initialize service locator with frequently used services
@@ -136,7 +146,6 @@ def get_service_locator():
     Returns:
         ServiceLocator: The service locator
     """
-    ServiceLocator.initialize()
     return ServiceLocator
 
 
@@ -144,28 +153,28 @@ def get_service_locator():
 
 def get_request_repository():
     """Get the request repository."""
-    return get_service_locator().get('request_repository')
+    return get_service_locator().get_service('RequestRepository')
 
 def get_user_repository():
     """Get the user repository."""
-    return get_service_locator().get('user_repository')
+    return get_service_locator().get_service('UserRepository')
 
 def get_budget_repository():
     """Get the budget repository."""
-    return get_service_locator().get('budget_repository')
+    return get_service_locator().get_service('BudgetRepository')
 
 def get_document_repository():
     """Get the document repository."""
-    return get_service_locator().get('document_repository')
+    return get_service_locator().get_service('DocumentRepository')
 
 def get_ai_service():
     """Get the AI service."""
-    return get_service_locator().get('ai_service')
+    return get_service_locator().get_service('AiService')
 
 def get_export_service():
     """Get the export service."""
-    return get_service_locator().get('export_service')
+    return get_service_locator().get_service('ExportService')
 
 def get_notification_service():
     """Get the notification service."""
-    return get_service_locator().get('notification_service')
+    return get_service_locator().get_service('NotificationService')

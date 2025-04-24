@@ -32,6 +32,9 @@ from app.utils.responsive import add_responsive_css
 # Import notification service
 from app.services.notification_service import display_notifications, check_for_notifications
 
+# Import application services initializer
+from app.services.init_services import init_services
+
 # Set up logging
 setup_logging()
 
@@ -87,13 +90,16 @@ def show_admin_panel():
 
 def main():
     """Main application entry point"""
+    # Initialize error monitoring
+    from app.utils.error_monitoring import init_error_monitoring
+    init_error_monitoring()
+    
     # Initialize internationalization
     from app.utils.internationalization import init_localization
     init_localization()
     
-    # Initialize error monitoring
-    from app.utils.error_monitoring import init_error_monitoring
-    init_error_monitoring()
+    # Initialize application services
+    init_services()
     
     # Add accessibility features
     from app.utils.accessibility import add_accessibility_features
