@@ -54,8 +54,38 @@ def check_session():
         return False
     return check_session_security()
 
+def show_admin_panel():
+    """Display admin panel with system management tools."""
+    from app.ui.admin import show_admin_dashboard
+    from app.utils.feature_flags import show_feature_flags_manager
+    from app.utils.accessibility import show_accessibility_dashboard
+    from app.utils.performance import show_performance_dashboard
+    
+    st.sidebar.title("Admin Tools")
+    admin_page = st.sidebar.radio(
+        "Select Tool",
+        ["System Dashboard", "Feature Flags", "Performance", "Accessibility"]
+    )
+    
+    if admin_page == "System Dashboard":
+        show_admin_dashboard()
+    elif admin_page == "Feature Flags":
+        show_feature_flags_manager()
+    elif admin_page == "Performance":
+        show_performance_dashboard()
+    elif admin_page == "Accessibility":
+        show_accessibility_dashboard()
+
 def main():
     """Main application entry point"""
+    # Initialize error monitoring
+    from app.utils.error_monitoring import init_error_monitoring
+    init_error_monitoring()
+    
+    # Add accessibility features
+    from app.utils.accessibility import add_accessibility_features
+    add_accessibility_features()
+    
     # Display user info in sidebar if logged in
     if "logged_in_user" in st.session_state and st.session_state.logged_in_user:
         display_user_info()
@@ -72,6 +102,8 @@ def main():
         show_accountant_dashboard()
     elif st.session_state.user_role == "approval":
         show_approval_dashboard()
+    elif st.session_state.user_role == "admin":
+        show_admin_panel()
     else:
         st.error("Unknown user role. Please contact system administrator.")
     

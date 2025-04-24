@@ -1,332 +1,423 @@
 """
-AI service integration module.
-Handles interactions with OpenAI and Google Gemini APIs.
+AI services module.
+Provides AI-powered analysis and features.
 """
 
 import os
+import time
 import logging
-from functools import lru_cache
-import json
-from openai import OpenAI
-from google import genai
-from google.genai import types
-import streamlit as st
-from app.utils.caching import cache_expensive_operation
+import openai
+import google.generativeai as genai
+from datetime import datetime
+import functools
+from app.utils.performance import timer
+from app.utils.feature_flags import FeatureFlags
+from app.utils.error_monitoring import capture_error
 
-# Initialize AI clients
-def initialize_ai_services():
-    """Initialize connections to AI services"""
-    # OpenAI setup
-    try:
-        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        logging.info("OpenAI API initialized successfully")
-    except Exception as e:
-        logging.error(f"Error initializing OpenAI API: {str(e)}")
-        openai_client = None
+# Configure API keys
+openai.api_key = os.getenv("OPENAI_API_KEY")
+genai.configure(api_key=os.getenv("GOOGLE_AI_API_KEY"))
+
+def cache_expensive_operation(func):
+    """Cache results of expensive AI operations."""
+    cache = {}
     
-    # Google Gemini setup
-    try:
-        genai.configure(api_key=os.getenv("GOOGLE_AI_API_KEY"))
-        logging.info("Google Gemini API initialized successfully")
-    except Exception as e:
-        logging.error(f"Error initializing Google Gemini API: {str(e)}")
-    
-    return openai_client
-
-# Initialize OpenAI client
-openai_client = initialize_ai_services()
-
-@lru_cache(maxsize=32)
-def validate_with_gpt(conference_name, research_paper_text, acceptance_letter_text, selected_index, conference_url=None):
-    """Validate conference documents using GPT"""
-    try:
-        # Check if OpenAI client is available
-        if not openai_client:
-            return {
-                "valid": False,
-                "error": "OpenAI service is not available",
-                "details": "Please check your API key and try again later."
-            }
-            
-        # URL-based index check
-        url_index_match, found_indexes = (False, [])
-        if conference_url:
-            url_index_match, found_indexes = extract_index_from_url(conference_url, selected_index)
-            
-        # Check for organizational naming convention matches
-        org_in_name = any(org in conference_name.upper() for org in ["ACM", "IEEE"])
-        org_match = selected_index.upper() in conference_name.upper()
-            
-        # Create prompt for GPT
-        prompt = f"""
-        Validate these conference submission elements:
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        # Create a cache key from the function name and arguments
+        key = f"{func.__name__}:{str(args)}:{str(kwargs)}"
         
-        Conference name: {conference_name}
-        Selected index: {selected_index}
+        # Check if result is in cache and not expired (24 hours)
+        if key in cache:
+            timestamp, result = cache[key]
+            if datetime.now().timestamp() - timestamp < 86400:  # 24 hours
+                logging.info(f"Cache hit for {func.__name__}")
+                return result
         
-        Research paper extract:
-        {research_paper_text[:1000]}...
+        # Execute function and cache result
+        result = func(*args, **kwargs)
+        cache[key] = (datetime.now().timestamp(), result)
         
-        Acceptance letter extract:
-        {acceptance_letter_text[:1000]}...
-        
-        Additional context:
-        - URL index match: {url_index_match} (found: {found_indexes})
-        - Organization in name: {org_in_name}
-        - Organization matches index: {org_match}
-        
-        Determine:
-        1. Is this a legitimate academic conference? (consider conference name, index)
-        2. Does the research paper content match the conference topic?
-        3. Is the acceptance letter authentic and related to this paper and conference?
-        
-        First provide detailed observations about each document, then a final verdict.
-        Format your response as a JSON object with these keys:
-        {
-            "legitimate_conference": true/false,
-            "paper_conference_match": true/false,
-            "authentic_acceptance": true/false,
-            "observations": "",
-            "valid": true/false,
-            "recommendation": ""
-        }
-        """
-        
-        # Make API call to OpenAI
-        response = openai_client.chat.completions.create(
-            model="gpt-4-turbo-preview",
-            messages=[
-                {"role": "system", "content": "You are a conference validation expert who verifies academic integrity."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.1,
-            response_format={"type": "json_object"}
-        )
-        
-        # Parse JSON response
-        result = json.loads(response.choices[0].message.content)
-        
-        # Add additional verification info
-        result["url_index_match"] = url_index_match
-        result["org_in_name"] = org_in_name
-        result["org_match"] = org_match
-        
+        # Limit cache size
+        if len(cache) > 100:
+            # Remove oldest entries
+            sorted_keys = sorted(cache.keys(), key=lambda k: cache[k][0])
+            for old_key in sorted_keys[:10]:
+                del cache[old_key]
+                
         return result
+    
+    return wrapper
+
+@capture_error
+@timer(label="AI-Conference-Validation")
+@cache_expensive_operation
+def validate_conference(conference_name, conference_url, destination=None):
+    """
+    Validate conference legitimacy using AI.
+    
+    Args:
+        conference_name: Name of the conference
+        conference_url: URL of the conference website
+        destination: Optional destination/location
         
-    except Exception as e:
-        logging.error(f"Error in validate_with_gpt: {str(e)}")
+    Returns:
+        dict: Validation results
+    """
+    # Check if AI analysis is enabled
+    if not FeatureFlags.is_enabled("ai_analysis"):
+        logging.info("AI analysis is disabled, skipping conference validation")
         return {
-            "valid": False,
-            "error": "Validation service error",
-            "details": str(e)
+            "legitimate": True,
+            "confidence": 0.5,
+            "notes": "AI analysis is currently disabled. Manual verification recommended.",
+            "potential_issues": []
         }
-
-@lru_cache(maxsize=32)
-def extract_index_from_url(url, selected_index):
-    """Extract and verify index information from conference URL"""
-    url = url.upper()
-    selected_index = selected_index.upper()
     
-    # Common indexes and their URL patterns
-    index_patterns = {
-        "IEEE": ["IEEE.ORG", "COMPUTER.ORG"],
-        "ACM": ["ACM.ORG", "SIGCHI", "SIGPLAN", "SIGSOFT"],
-        "SCOPUS": ["SCOPUS", "ELSEVIER.COM"],
-        "WEB OF SCIENCE": ["WEBOFSCIENCE", "CLARIVATE"],
-        "PUBMED": ["PUBMED", "NCBI.NLM.NIH.GOV"],
-        "MEDLINE": ["MEDLINE", "NLM.NIH.GOV"]
-    }
-    
-    # Check if URL contains patterns for the selected index
-    found_indexes = []
-    
-    for index, patterns in index_patterns.items():
-        for pattern in patterns:
-            if pattern in url:
-                found_indexes.append(index)
-                break
-    
-    # Check if selected index is found in URL
-    url_index_match = selected_index in found_indexes
-    
-    return url_index_match, found_indexes
-
-@lru_cache(maxsize=32)
-def get_conference_recommendations(research_paper_text, field_of_study=None):
-    """Get conference recommendations based on research paper content"""
     try:
-        # Check if OpenAI client is available
-        if not openai_client:
-            return {
-                "success": False,
-                "error": "OpenAI service is not available",
-                "recommendations": []
-            }
-            
-        # Create prompt
+        # Prepare prompt
         prompt = f"""
-        Based on this research paper abstract, recommend appropriate academic conferences:
+        Analyze the following academic conference for legitimacy:
         
-        Abstract:
-        {research_paper_text[:2000]}
+        Conference Name: {conference_name}
+        Conference Website: {conference_url}
+        Destination: {destination or 'Not provided'}
         
-        Field of study: {field_of_study or "Not specified"}
+        Please determine if this appears to be a legitimate academic conference or potentially a predatory/fake conference.
+        Consider factors such as:
+        1. Is this a known and established conference?
+        2. Does the website look professional and provide clear information?
+        3. Is the conference location consistent with the conference topic?
+        4. Are there any red flags that suggest this might be a predatory conference?
         
-        Recommend 5 suitable conferences where this research could be presented.
-        For each conference provide:
-        1. Full conference name
-        2. Academic index (IEEE, ACM, Scopus, etc.)
-        3. Conference tier/quality (top-tier, mid-tier, etc.)
-        4. Subject alignment (how well the paper matches)
-        5. Brief justification
-        
-        Format as JSON array with these fields: name, index, tier, alignment, justification
+        Provide your assessment with:
+        - Legitimacy determination (legitimate or potentially predatory)
+        - Confidence level (0.0 to 1.0)
+        - Specific notes and observations
+        - List of potential issues if any
         """
         
-        # Make API call to OpenAI
-        response = openai_client.chat.completions.create(
-            model="gpt-4-turbo-preview",
-            messages=[
-                {"role": "system", "content": "You are an academic research advisor who specializes in conference recommendations."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2,
-            response_format={"type": "json_object"}
-        )
+        # Choose AI provider based on configuration
+        ai_provider = os.getenv("AI_PROVIDER", "openai").lower()
         
-        # Parse JSON response
-        result = json.loads(response.choices[0].message.content)
-        
-        return {
-            "success": True,
-            "recommendations": result.get("recommendations", [])
-        }
-        
+        if ai_provider == "google":
+            return _analyze_with_google_ai(prompt)
+        else:
+            return _analyze_with_openai(prompt)
+            
     except Exception as e:
-        logging.error(f"Error in get_conference_recommendations: {str(e)}")
+        logging.error(f"Error validating conference: {str(e)}")
+        # Return safe fallback
         return {
-            "success": False,
-            "error": str(e),
-            "recommendations": []
+            "legitimate": True,
+            "confidence": 0.0,
+            "notes": f"Error during AI analysis: {str(e)}. Manual verification required.",
+            "potential_issues": ["AI analysis failed"]
         }
 
-def generate_conference_summary(acceptance_text, conference_name):
-    """Generate a summary of conference details based on acceptance letter"""
+@capture_error
+@timer(label="AI-Paper-Analysis")
+@cache_expensive_operation
+def analyze_research_paper(paper_text, conference_name=None):
+    """
+    Analyze research paper content using AI.
+    
+    Args:
+        paper_text: Text content of the paper
+        conference_name: Optional name of the target conference
+        
+    Returns:
+        dict: Analysis results
+    """
+    # Check if AI analysis is enabled
+    if not FeatureFlags.is_enabled("ai_analysis"):
+        logging.info("AI analysis is disabled, skipping paper analysis")
+        return {
+            "quality_score": 0.5,
+            "summary": "AI analysis is currently disabled. Manual review recommended.",
+            "strengths": ["Could not be automatically analyzed"],
+            "weaknesses": ["Could not be automatically analyzed"],
+            "suggestions": ["Enable AI analysis for detailed feedback"]
+        }
+    
     try:
-        if not openai_client:
-            return "Unable to generate summary. AI service not available."
-            
+        # Limit text length to avoid token limits
+        max_length = 8000
+        if len(paper_text) > max_length:
+            paper_text = paper_text[:max_length] + "... [truncated]"
+        
+        # Prepare prompt
         prompt = f"""
-        Based on this conference acceptance letter, extract and summarize the key information:
+        Analyze the following research paper{' for ' + conference_name if conference_name else ''}:
         
-        Acceptance letter:
-        {acceptance_text[:2000]}
+        {paper_text}
         
-        Conference name: {conference_name}
-        
-        Create a concise summary (max 100 words) highlighting:
-        - Main conference focus
-        - Key dates
-        - Location details
-        - Any special requirements
+        Please provide an academic assessment of this paper with:
+        1. A quality score from 0.0 to 1.0
+        2. A brief summary of the paper (3-5 sentences)
+        3. Key strengths (3-5 points)
+        4. Potential weaknesses or areas for improvement (3-5 points)
+        5. Specific suggestions to improve the paper (3-5 points)
         """
         
-        response = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+        # Choose AI provider based on configuration
+        ai_provider = os.getenv("AI_PROVIDER", "openai").lower()
+        
+        if ai_provider == "google":
+            return _process_paper_analysis(_analyze_with_google_ai(prompt))
+        else:
+            return _process_paper_analysis(_analyze_with_openai(prompt))
+            
+    except Exception as e:
+        logging.error(f"Error analyzing research paper: {str(e)}")
+        # Return safe fallback
+        return {
+            "quality_score": 0.5,
+            "summary": f"Error during analysis: {str(e)}. Manual review required.",
+            "strengths": ["Could not be automatically analyzed"],
+            "weaknesses": ["Could not be automatically analyzed"],
+            "suggestions": ["Try again later or request manual review"]
+        }
+
+@capture_error
+@timer(label="AI-Notes-Generation")
+def generate_ai_notes(request_data, user_data=None, paper_text=None):
+    """
+    Generate AI-powered notes for a request.
+    
+    Args:
+        request_data: Request information
+        user_data: Optional user information
+        paper_text: Optional paper text
+        
+    Returns:
+        str: Generated notes
+    """
+    # Check if AI analysis is enabled
+    if not FeatureFlags.is_enabled("ai_analysis"):
+        logging.info("AI analysis is disabled, skipping notes generation")
+        return "AI analysis is currently disabled. Please review the request manually."
+    
+    try:
+        # Construct context
+        context = f"""
+        Faculty: {user_data['name'] if user_data else request_data.get('faculty_name', 'Unknown')}
+        Department: {user_data['department'] if user_data else request_data.get('department', 'Unknown')}
+        Conference: {request_data.get('conference_name', 'Unknown')}
+        Destination: {request_data.get('destination', 'Unknown')}, {request_data.get('city', 'Unknown')}
+        Dates: {request_data.get('date_from', 'Unknown')} to {request_data.get('date_to', 'Unknown')}
+        Purpose: {request_data.get('purpose_of_attending', 'Unknown')}
+        
+        Budget Details:
+        - Registration: ${request_data.get('registration_fee', 0)}
+        - Per Diem: ${request_data.get('per_diem', 0)}
+        - Visa Fee: ${request_data.get('visa_fee', 0)}
+        """
+        
+        if paper_text:
+            # Add truncated paper summary
+            max_paper_length = 3000
+            paper_summary = paper_text[:max_paper_length] + "..." if len(paper_text) > max_paper_length else paper_text
+            context += f"\n\nPaper Abstract: {paper_summary}"
+        
+        # Prepare prompt
+        prompt = f"""
+        Based on the following conference travel request:
+        
+        {context}
+        
+        Please provide helpful notes for the approver, including:
+        1. Assessment of the conference's relevance to the faculty's field
+        2. Assessment of the budget reasonableness
+        3. Any potential concerns or special considerations
+        4. Recommendation for approval or further review
+        
+        Keep your response concise and professional.
+        """
+        
+        # Choose AI provider based on configuration
+        ai_provider = os.getenv("AI_PROVIDER", "openai").lower()
+        
+        if ai_provider == "google":
+            response = _analyze_with_google_ai(prompt)
+            return response.get("text", "Error generating notes. Please review manually.")
+        else:
+            response = _analyze_with_openai(prompt)
+            return response.get("text", "Error generating notes. Please review manually.")
+            
+    except Exception as e:
+        logging.error(f"Error generating AI notes: {str(e)}")
+        return f"Error generating AI notes: {str(e)}. Please review the request manually."
+
+def _analyze_with_openai(prompt):
+    """Use OpenAI API for analysis."""
+    try:
+        response = openai.ChatCompletion.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that summarizes conference information."},
+                {"role": "system", "content": "You are a helpful academic assistant analyzing conference travel requests."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
-            max_tokens=200
+            max_tokens=1500
         )
         
-        return response.choices[0].message.content.strip()
+        output = response.choices[0].message.content.strip()
         
-    except Exception as e:
-        logging.error(f"Error generating conference summary: {str(e)}")
-        return f"Unable to generate summary: {str(e)}"
-
-@cache_expensive_operation(key="ai_notes", ttl_seconds=3600)
-def generate_ai_notes(conference_name, purpose, index_type, destination_country, city):
-    """Generate AI notes with caching."""
-    try:
-        if not openai_client:
-            return "Unable to generate notes. AI service not available."
+        # Parse output into structured format
+        import re
+        
+        # For conference validation
+        if "legitimacy determination" in prompt.lower():
+            legitimate = "legitimate" in output.lower() and "not legitimate" not in output.lower()
             
-        prompt = f"""
-        Generate helpful travel notes for a professor attending this academic conference:
-        
-        Conference: {conference_name}
-        Purpose: {purpose}
-        Academic index: {index_type}
-        Destination: {city}, {destination_country}
-        
-        Provide concise notes (max 150 words) including:
-        1. Academic relevance
-        2. Key travel considerations for this location
-        3. Cultural or professional tips
-        """
-        
-        response = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a knowledgeable academic travel advisor."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.4,
-            max_tokens=250
-        )
-        
-        return response.choices[0].message.content.strip()
-        
-    except Exception as e:
-        logging.error(f"Error generating AI notes: {str(e)}")
-        return f"Unable to generate notes: {str(e)}"
-
-@cache_expensive_operation(key="ai_analysis", ttl_seconds=7200)
-def analyze_research_paper(paper_text):
-    """Analyze research paper with caching."""
-    try:
-        if not openai_client:
+            # Extract confidence
+            confidence_match = re.search(r'confidence level:?\s*(0\.\d+|1\.0)', output, re.IGNORECASE)
+            confidence = float(confidence_match.group(1)) if confidence_match else 0.5
+            
+            # Extract issues
+            issues = []
+            issues_section = re.search(r'potential issues:?\s*(.*?)(?:\n\n|$)', output, re.IGNORECASE | re.DOTALL)
+            if issues_section:
+                issue_text = issues_section.group(1)
+                # Look for list items
+                list_items = re.findall(r'(?:^|\n)(?:- |\d+\. )(.*?)(?:\n|$)', issue_text)
+                if list_items:
+                    issues = [item.strip() for item in list_items if item.strip()]
+                else:
+                    # No list format, use the whole section
+                    issues = [issue_text.strip()]
+            
             return {
-                "success": False,
-                "error": "AI service not available"
+                "legitimate": legitimate,
+                "confidence": confidence,
+                "notes": output,
+                "potential_issues": issues
             }
             
-        prompt = f"""
-        Analyze this research paper excerpt and provide academic feedback:
-        
-        {paper_text[:3000]}
-        
-        Provide structured analysis with these sections:
-        1. Key strengths (3 points)
-        2. Areas for improvement (3 points)
-        3. Publication readiness (scale 1-10)
-        4. Specific recommendations
-        
-        Format response as JSON with these keys: strengths, improvements, readiness, recommendations
-        """
-        
-        response = openai_client.chat.completions.create(
-            model="gpt-4-turbo-preview",
-            messages=[
-                {"role": "system", "content": "You are an expert academic reviewer who provides constructive feedback."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2,
-            response_format={"type": "json_object"}
-        )
-        
-        # Parse JSON response
-        result = json.loads(response.choices[0].message.content)
-        result["success"] = True
-        
-        return result
+        # For paper analysis and general notes
+        return {
+            "text": output
+        }
         
     except Exception as e:
-        logging.error(f"Error analyzing research paper: {str(e)}")
+        logging.error(f"Error with OpenAI API: {str(e)}")
+        raise
+
+def _analyze_with_google_ai(prompt):
+    """Use Google Generative AI for analysis."""
+    try:
+        model = genai.GenerativeModel(os.getenv("GOOGLE_AI_MODEL", "gemini-pro"))
+        response = model.generate_content(prompt)
+        
+        output = response.text.strip()
+        
+        # Parse output similar to OpenAI function
+        import re
+        
+        # For conference validation
+        if "legitimacy determination" in prompt.lower():
+            legitimate = "legitimate" in output.lower() and "not legitimate" not in output.lower()
+            
+            # Extract confidence
+            confidence_match = re.search(r'confidence level:?\s*(0\.\d+|1\.0)', output, re.IGNORECASE)
+            confidence = float(confidence_match.group(1)) if confidence_match else 0.5
+            
+            # Extract issues
+            issues = []
+            issues_section = re.search(r'potential issues:?\s*(.*?)(?:\n\n|$)', output, re.IGNORECASE | re.DOTALL)
+            if issues_section:
+                issue_text = issues_section.group(1)
+                # Look for list items
+                list_items = re.findall(r'(?:^|\n)(?:- |\d+\. )(.*?)(?:\n|$)', issue_text)
+                if list_items:
+                    issues = [item.strip() for item in list_items if item.strip()]
+                else:
+                    # No list format, use the whole section
+                    issues = [issue_text.strip()]
+            
+            return {
+                "legitimate": legitimate,
+                "confidence": confidence,
+                "notes": output,
+                "potential_issues": issues
+            }
+            
+        # For paper analysis and general notes
         return {
-            "success": False,
-            "error": str(e)
+            "text": output
+        }
+        
+    except Exception as e:
+        logging.error(f"Error with Google AI API: {str(e)}")
+        raise
+
+def _process_paper_analysis(response):
+    """Process and structure the paper analysis response."""
+    try:
+        text = response.get("text", "")
+        import re
+        
+        # Extract quality score
+        score_match = re.search(r'quality score:?\s*(0\.\d+|1\.0)', text, re.IGNORECASE)
+        quality_score = float(score_match.group(1)) if score_match else 0.5
+        
+        # Extract summary
+        summary_match = re.search(r'summary:?\s*(.*?)(?:\n\n|\n(?=\d+\.)|\n(?=Key strengths))', text, re.IGNORECASE | re.DOTALL)
+        summary = summary_match.group(1).strip() if summary_match else "No summary provided."
+        
+        # Extract strengths
+        strengths = []
+        strengths_section = re.search(r'(?:key )?strengths:?\s*(.*?)(?:\n\n|\n(?=\d+\.)|\n(?=Potential weaknesses))', text, re.IGNORECASE | re.DOTALL)
+        if strengths_section:
+            strength_text = strengths_section.group(1)
+            # Look for list items
+            list_items = re.findall(r'(?:^|\n)(?:- |\d+\. )(.*?)(?:\n|$)', strength_text)
+            if list_items:
+                strengths = [item.strip() for item in list_items if item.strip()]
+            
+        # Extract weaknesses
+        weaknesses = []
+        weaknesses_section = re.search(r'(?:potential )?weaknesses:?\s*(.*?)(?:\n\n|\n(?=\d+\.)|\n(?=Specific suggestions))', text, re.IGNORECASE | re.DOTALL)
+        if weaknesses_section:
+            weakness_text = weaknesses_section.group(1)
+            # Look for list items
+            list_items = re.findall(r'(?:^|\n)(?:- |\d+\. )(.*?)(?:\n|$)', weakness_text)
+            if list_items:
+                weaknesses = [item.strip() for item in list_items if item.strip()]
+        
+        # Extract suggestions
+        suggestions = []
+        suggestions_section = re.search(r'(?:specific )?suggestions:?\s*(.*?)(?:\n\n|$)', text, re.IGNORECASE | re.DOTALL)
+        if suggestions_section:
+            suggestion_text = suggestions_section.group(1)
+            # Look for list items
+            list_items = re.findall(r'(?:^|\n)(?:- |\d+\. )(.*?)(?:\n|$)', suggestion_text)
+            if list_items:
+                suggestions = [item.strip() for item in list_items if item.strip()]
+        
+        # Ensure all lists have at least one item
+        if not strengths:
+            strengths = ["No specific strengths identified."]
+        if not weaknesses:
+            weaknesses = ["No specific weaknesses identified."]
+        if not suggestions:
+            suggestions = ["No specific suggestions provided."]
+        
+        return {
+            "quality_score": quality_score,
+            "summary": summary,
+            "strengths": strengths,
+            "weaknesses": weaknesses,
+            "suggestions": suggestions
+        }
+        
+    except Exception as e:
+        logging.error(f"Error processing paper analysis: {str(e)}")
+        return {
+            "quality_score": 0.5,
+            "summary": "Error processing analysis.",
+            "strengths": ["Processing error"],
+            "weaknesses": ["Processing error"],
+            "suggestions": ["Please review manually"]
         }
